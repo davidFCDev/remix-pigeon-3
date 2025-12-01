@@ -14,7 +14,7 @@ export class MainScene {
 
   // Objetos del juego
   private pigeon: THREE.Group; // Contenedor para la paloma
-  private ground: THREE.Mesh; // El terreno
+  private ground: THREE.Object3D; // El terreno (ahora puede ser un Group del GLB)
   private sky: THREE.Mesh | null = null; // El cielo
 
   // Sistema de puntuación y aros
@@ -62,6 +62,14 @@ export class MainScene {
   private cameraHeight: number = 3;
   private cameraLerpFactor: number = 0.08;
 
+  // Límites del mapa
+  private mapBounds = {
+    minX: -1000,
+    maxX: 1000,
+    minZ: -1000,
+    maxZ: 1000,
+  };
+
   constructor() {
     // Crear escena
     this.scene = new THREE.Scene();
@@ -88,9 +96,14 @@ export class MainScene {
 
     // Crear elementos del juego
     this.createSky(); // Cielo mejorado
-    this.ground = this.createGround();
-    this.createTrees(); // Añadir árboles
-    this.createRocks(); // Añadir rocas
+
+    // Inicializar ground temporalmente para evitar errores antes de la carga
+    this.ground = new THREE.Group();
+    this.scene.add(this.ground);
+
+    this.createGround(); // Carga el mapa GLB asíncronamente
+    // this.createTrees(); // Se mueven al callback de createGround
+    // this.createRocks(); // Se mueven al callback de createGround
     this.pigeon = this.createPigeon();
 
     // Inicializar sistema de aros
@@ -165,16 +178,27 @@ export class MainScene {
       angleVariation
     );
 
-    // 2. Comprobar si nos estamos alejando demasiado del centro (0,0)
-    // El mapa es 2000x2000, radio seguro ~800
-    const distToCenter = currentPos.length();
-    if (distToCenter > 700) {
-      // Calcular vector hacia el centro
+    // 2. Comprobar si nos estamos alejando demasiado del centro o de los límites
+    // Usamos los límites calculados del mapa (mapBounds)
+    if (
+      nextPos.x < this.mapBounds.minX ||
+      nextPos.x > this.mapBounds.maxX ||
+      nextPos.z < this.mapBounds.minZ ||
+      nextPos.z > this.mapBounds.maxZ
+    ) {
+      // Calcular vector hacia el centro (0,0) para volver a la zona segura
       const toCenter = new THREE.Vector3(0, 0, 0).sub(currentPos).normalize();
 
-      // Mezclar suavemente la dirección actual con la dirección al centro
-      // Esto hará que el camino se curve de vuelta al mapa
-      this.ringPathDirection.lerp(toCenter, 0.15).normalize();
+      // Forzar el giro hacia el centro con más fuerza
+      this.ringPathDirection.lerp(toCenter, 0.5).normalize();
+
+      // Recalcular el movimiento con la nueva dirección corregida
+      const correctedMove = this.ringPathDirection
+        .clone()
+        .multiplyScalar(distance);
+
+      // Resetear nextPos y aplicar movimiento corregido
+      nextPos.copy(currentPos).add(correctedMove);
     }
 
     // 3. Calcular nueva posición
@@ -384,7 +408,7 @@ export class MainScene {
 
     const uniforms = {
       topColor: { value: new THREE.Color(0x0077ff) }, // Azul intenso arriba
-      bottomColor: { value: new THREE.Color(0xffffff) }, // Blanco en el horizonte
+      bottomColor: { value: new THREE.Color(0x87ceeb) }, // Azul cielo en el horizonte (coincide con niebla)
       offset: { value: 33 },
       exponent: { value: 0.6 },
     };
@@ -403,83 +427,71 @@ export class MainScene {
   }
 
   /**
-   * Crea el terreno/superficie del juego con estilo Low Poly optimizado
+   * Carga el mapa desde un archivo GLB
    */
-  private createGround(): THREE.Mesh {
-    // Geometría base optimizada para móviles
-    // Reducimos segmentos de 60x60 a 24x24 para mejorar FPS
-    let groundGeometry: THREE.BufferGeometry = new THREE.PlaneGeometry(
-      2000,
-      2000,
-      24,
-      24
-    );
+  private createGround(): void {
+    const loader = new GLTFLoader();
+    loader.load(
+      "/map.glb",
+      (gltf) => {
+        const mapModel = gltf.scene;
 
-    // Generar colinas
-    const positionAttribute = groundGeometry.attributes.position;
-    for (let i = 0; i < positionAttribute.count; i++) {
-      const x = positionAttribute.getX(i);
-      const y = positionAttribute.getY(i);
+        // Ajustar posición y escala si es necesario
+        // Mantenemos la posición Y = -15 que usábamos antes para que coincida con la altura de vuelo
+        mapModel.position.y = -15;
 
-      // Ruido simplificado
-      const height =
-        Math.sin(x * 0.01) * 15 +
-        Math.cos(y * 0.01) * 15 +
-        Math.sin(x * 0.03 + y * 0.03) * 8;
+        // Escalamos el mapa significativamente (Aumentado de 50 a 150)
+        mapModel.scale.set(150, 150, 150);
 
-      positionAttribute.setZ(i, height);
-    }
+        // Calcular los límites reales del mapa cargado
+        // Es importante actualizar la matriz de mundo antes de calcular la caja
+        mapModel.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(mapModel);
 
-    // Convertir a "Low Poly" (Flat Shading real)
-    groundGeometry = groundGeometry.toNonIndexed();
-    groundGeometry.computeVertexNormals();
+        // Ajustamos los límites para que estén casi en el borde visual
+        // Reducimos el margen de seguridad a 20 unidades
+        this.mapBounds.minX = box.min.x + 20;
+        this.mapBounds.maxX = box.max.x - 20;
+        this.mapBounds.minZ = box.min.z + 20;
+        this.mapBounds.maxZ = box.max.z - 20;
 
-    // Colorear vértices
-    const count = groundGeometry.attributes.position.count;
-    const colors = [];
-    const pos = groundGeometry.attributes.position;
+        console.log("Límites del mapa calculados:", this.mapBounds);
 
-    const colorLow = new THREE.Color(0x2d6e32); // Verde oscuro
-    const colorHigh = new THREE.Color(0x7cbd59); // Verde claro
-    const colorDirt = new THREE.Color(0x8b5a2b); // Marrón tierra
+        // Configurar sombras y materiales
+        mapModel.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.receiveShadow = true;
+            child.castShadow = false; // El terreno recibe sombras
 
-    for (let i = 0; i < count; i++) {
-      const x = pos.getX(i);
-      const y = pos.getY(i);
-      const h = pos.getZ(i);
+            // Respetar el material original del GLB
+            if (child.material) {
+              child.material.side = THREE.DoubleSide;
+              // Asegurarnos de que el material reaccione a la luz si es posible
+              if (child.material instanceof THREE.MeshStandardMaterial) {
+                child.material.roughness = 0.8; // Ajuste para que no brille demasiado
+              }
+            }
+          }
+        });
 
-      const dirtNoise = Math.sin(x * 0.02) + Math.cos(y * 0.02);
-      const t = (h + 20) / 60;
+        // Reemplazar el objeto ground temporal
+        this.scene.remove(this.ground);
+        this.ground = mapModel;
+        this.scene.add(this.ground);
 
-      let color = colorLow.clone().lerp(colorHigh, Math.max(0, Math.min(1, t)));
+        console.log("Mapa GLB cargado correctamente");
 
-      if (dirtNoise > 0.5) {
-        const dirtFactor = Math.min(1, (dirtNoise - 0.5) * 2);
-        color.lerp(colorDirt, dirtFactor);
+        // Una vez cargado el mapa, generamos la vegetación extra
+        this.createTrees();
+        this.createRocks();
+      },
+      (xhr) => {
+        console.log((xhr.loaded / xhr.total) * 100 + "% cargado del mapa");
+      },
+      (error) => {
+        console.error("Error cargando el mapa (map.glb):", error);
       }
-
-      colors.push(color.r, color.g, color.b);
-    }
-
-    groundGeometry.setAttribute(
-      "color",
-      new THREE.Float32BufferAttribute(colors, 3)
     );
-
-    // Usar MeshLambertMaterial que es mucho más eficiente que Standard
-    const groundMaterial = new THREE.MeshLambertMaterial({
-      vertexColors: true,
-      flatShading: true,
-      side: THREE.DoubleSide,
-    });
-
-    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -15;
-    ground.receiveShadow = true;
-
-    this.scene.add(ground);
-    return ground;
   }
 
   /**
@@ -653,7 +665,8 @@ export class MainScene {
 
       // Raycasting para encontrar altura del suelo
       raycaster.set(new THREE.Vector3(x, 200, z), downDirection);
-      const intersects = raycaster.intersectObject(this.ground);
+      // IMPORTANTE: recursive: true para que funcione con Grupos (GLB)
+      const intersects = raycaster.intersectObject(this.ground, true);
 
       if (intersects.length > 0) {
         const groundPoint = intersects[0].point;
@@ -874,6 +887,16 @@ export class MainScene {
     if (this.pigeon.position.y < 2) {
       this.pigeon.position.y = 2;
     }
+
+    // Limitar movimiento dentro de los bordes del mapa (Paredes invisibles)
+    if (this.pigeon.position.x < this.mapBounds.minX)
+      this.pigeon.position.x = this.mapBounds.minX;
+    if (this.pigeon.position.x > this.mapBounds.maxX)
+      this.pigeon.position.x = this.mapBounds.maxX;
+    if (this.pigeon.position.z < this.mapBounds.minZ)
+      this.pigeon.position.z = this.mapBounds.minZ;
+    if (this.pigeon.position.z > this.mapBounds.maxZ)
+      this.pigeon.position.z = this.mapBounds.maxZ;
   }
 
   /**
