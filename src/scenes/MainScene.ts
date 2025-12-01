@@ -23,11 +23,19 @@ export class MainScene {
   private score: number = 0;
   private scoreElement: HTMLElement | null = null;
 
+  // Sistema de Hambre
+  private maxHunger: number = 100;
+  private currentHunger: number = 100;
+  private hungerDepletionRate: number = 5.0; // Puntos por segundo
+  private hungerBarElement: HTMLElement | null = null;
+  private isGameOver: boolean = false;
+
   // Sistema de Power-ups (Aros)
   private powerUps: THREE.Mesh[] = [];
   private powerUpGeometry!: THREE.TorusGeometry;
   private powerUpMaterial!: THREE.MeshToonMaterial;
   private ringEffects: THREE.Mesh[] = []; // Efectos visuales de aros
+  private particles: THREE.Mesh[] = []; // Partículas para efectos (Donuts)
 
   // Assets cargados
   private assetsLoaded: boolean = false;
@@ -142,7 +150,10 @@ export class MainScene {
 
     // Obtener referencia al elemento de puntuación
     this.scoreElement = document.getElementById("score-value");
-    if (this.scoreElement) this.scoreElement.style.display = "none";
+    // if (this.scoreElement) this.scoreElement.style.display = "none"; // Mostrar score
+
+    // Obtener referencia a la barra de hambre
+    this.hungerBarElement = document.getElementById("hunger-bar");
 
     // Iniciar loop de animación
     this.animate();
@@ -293,7 +304,7 @@ export class MainScene {
 
     const donut = this.donutModel.clone();
     donut.position.copy(position);
-    
+
     // Orientación aleatoria inicial
     donut.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
 
@@ -311,6 +322,22 @@ export class MainScene {
 
     this.scene.add(donut);
     this.donuts.push(donut);
+
+    // Añadir Aura (Brillo rosa)
+    // Usamos una esfera simple con material aditivo transparente
+    // Ajustamos el radio para que sea un poco más grande que el donut
+    // El donut tiene escala 3, así que una esfera de radio 0.8 será radio real 2.4
+    const auraGeo = new THREE.SphereGeometry(0.8, 16, 16);
+    const auraMat = new THREE.MeshBasicMaterial({
+      color: 0xff69b4, // Hot Pink
+      transparent: true,
+      opacity: 0.3,
+      blending: THREE.AdditiveBlending,
+      side: THREE.FrontSide, // Solo visible por fuera
+      depthWrite: false, // No escribir en el buffer de profundidad para evitar oclusión rara
+    });
+    const aura = new THREE.Mesh(auraGeo, auraMat);
+    donut.add(aura); // Añadir como hijo para que herede posición y movimiento
   }
 
   /**
@@ -345,7 +372,10 @@ export class MainScene {
     const collectedPowerUp = this.powerUps[index];
 
     // Efecto visual
-    this.createRingExplosion(collectedPowerUp.position, collectedPowerUp.rotation);
+    this.createRingExplosion(
+      collectedPowerUp.position,
+      collectedPowerUp.rotation
+    );
 
     // Eliminar
     this.scene.remove(collectedPowerUp);
@@ -364,8 +394,8 @@ export class MainScene {
   private collectDonut(index: number): void {
     const collectedDonut = this.donuts[index];
 
-    // Efecto visual (podríamos hacerlo diferente, pero reutilizamos la explosión por ahora)
-    this.createRingExplosion(collectedDonut.position, collectedDonut.rotation);
+    // Efecto visual: Explosión de partículas rosa suave
+    this.createDonutExplosion(collectedDonut.position);
 
     // Eliminar
     this.scene.remove(collectedDonut);
@@ -377,8 +407,49 @@ export class MainScene {
       this.scoreElement.innerText = this.score.toString();
     }
 
+    // Restaurar hambre (Comer)
+    this.currentHunger = Math.min(this.maxHunger, this.currentHunger + 15);
+
     // Reponer Donut
     this.spawnRandomDonut();
+  }
+
+  /**
+   * Crea una explosión de partículas suaves (estilo confeti/magia)
+   */
+  private createDonutExplosion(position: THREE.Vector3): void {
+    const particleCount = 15;
+    // Usamos cubos pequeños o esferas low poly
+    const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+
+    for (let i = 0; i < particleCount; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xff69b4, // Rosa
+        transparent: true,
+        opacity: 0.8,
+      });
+
+      const particle = new THREE.Mesh(geometry, material);
+      particle.position.copy(position);
+
+      // Velocidad aleatoria en todas direcciones
+      particle.userData = {
+        velocity: new THREE.Vector3(
+          (Math.random() - 0.5) * 15,
+          (Math.random() - 0.5) * 15,
+          (Math.random() - 0.5) * 15
+        ),
+        rotationSpeed: new THREE.Vector3(
+          Math.random() * 4,
+          Math.random() * 4,
+          Math.random() * 4
+        ),
+        life: 1.0, // Vida útil
+      };
+
+      this.scene.add(particle);
+      this.particles.push(particle);
+    }
   }
 
   /**
@@ -966,6 +1037,30 @@ export class MainScene {
       }
     }
 
+    // Actualizar partículas (Donuts)
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+
+      // Mover
+      p.position.add(p.userData.velocity.clone().multiplyScalar(delta));
+
+      // Rotar
+      p.rotation.x += p.userData.rotationSpeed.x * delta;
+      p.rotation.y += p.userData.rotationSpeed.y * delta;
+
+      // Desvanecer
+      if (p.material instanceof THREE.Material) {
+        p.material.opacity -= delta * 1.5;
+
+        if (p.material.opacity <= 0) {
+          this.scene.remove(p);
+          p.geometry.dispose();
+          p.material.dispose();
+          this.particles.splice(i, 1);
+        }
+      }
+    }
+
     // Animar Power-ups (Eliminado)
     // this.powerUps.forEach((pu) => { ... });
 
@@ -980,7 +1075,8 @@ export class MainScene {
           pu.userData.initialY +
           Math.sin(
             this.clock.getElapsedTime() * 1.5 + pu.userData.floatOffset
-          ) * 1.5;
+          ) *
+            1.5;
       }
     });
 
@@ -997,7 +1093,8 @@ export class MainScene {
           Math.sin(
             this.clock.getElapsedTime() * donut.userData.floatSpeed +
               donut.userData.floatOffset
-          ) * 1.5;
+          ) *
+            1.5;
       }
     });
 
@@ -1086,13 +1183,55 @@ export class MainScene {
   }
 
   /**
+   * Actualiza la lógica del hambre
+   */
+  private updateHunger(delta: number): void {
+    if (this.isGameOver) return;
+
+    // Reducir hambre
+    this.currentHunger -= this.hungerDepletionRate * delta;
+
+    // Comprobar Game Over
+    if (this.currentHunger <= 0) {
+      this.currentHunger = 0;
+      this.gameOver();
+    }
+
+    // Actualizar UI
+    if (this.hungerBarElement) {
+      const percentage = (this.currentHunger / this.maxHunger) * 100;
+
+      // Determinar color
+      let color = "#00ff00"; // Verde
+      if (percentage < 50) color = "#ffff00"; // Amarillo
+      if (percentage < 20) color = "#ff0000"; // Rojo
+
+      // Actualizar gradiente cónico
+      this.hungerBarElement.style.background = `conic-gradient(${color} ${percentage}%, transparent 0)`;
+    }
+  }
+
+  private gameOver(): void {
+    this.isGameOver = true;
+    alert(
+      `¡Juego Terminado! Tu paloma tiene demasiada hambre.\nPuntuación final: ${this.score}`
+    );
+    location.reload();
+  }
+
+  /**
    * Loop principal de animación
    */
   private animate = (): void => {
+    if (this.isGameOver) return;
+
     requestAnimationFrame(this.animate);
 
     // Calcular delta time (tiempo transcurrido desde el último frame en segundos)
     const delta = this.clock.getDelta();
+
+    // Actualizar hambre
+    this.updateHunger(delta);
 
     // Procesar movimiento pasando delta
     this.handleMovement(delta);
