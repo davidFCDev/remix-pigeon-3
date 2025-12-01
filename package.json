@@ -1,0 +1,33 @@
+{
+  "name": "pidgeon-test",
+  "version": "1.0.0",
+  "description": "Pidgeon 3D Game - A pigeon flying simulator",
+  "type": "module",
+  "scripts": {
+    "dev": "remix-dev dev",
+    "build": "remix-dev build",
+    "preview": "remix-dev preview",
+    "deploy": "remix-dev deploy"
+  },
+  "keywords": [
+    "game",
+    "three.js",
+    "3d",
+    "pigeon",
+    "remix"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@farcade/game-sdk": "^0.2.1",
+    "@insidethesim/remix-dev": "^1.2.4",
+    "@types/three": "^0.181.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.0.0"
+  },
+  "dependencies": {
+    "three": "^0.181.2"
+  }
+}
