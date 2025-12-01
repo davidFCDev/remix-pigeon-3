@@ -26,6 +26,20 @@ export class MainScene {
   private nextRingMaterial!: THREE.MeshToonMaterial;
   private ringEffects: THREE.Mesh[] = []; // Efectos visuales de aros
 
+  // Power-ups y Efectos
+  // private powerUps: THREE.Mesh[] = []; // Eliminado
+  // private powerUpGeometry!: THREE.SphereGeometry; // Eliminado
+  // private powerUpMaterial!: THREE.MeshToonMaterial; // Eliminado
+  private explosionGeometry!: THREE.TorusGeometry;
+  private isSpeedBoostActive: boolean = false;
+  private speedBoostTimer: number = 0;
+  private baseSpeed: number = 25.0;
+  private boostSpeed: number = 80.0; // Ultravelocidad
+  private trailParticles: THREE.Mesh[] = [];
+
+  // Indicadores
+  private directionArrow: THREE.Mesh | null = null;
+
   // Animación
   private mixer: THREE.AnimationMixer | null = null;
   private clock: THREE.Clock = new THREE.Clock();
@@ -62,13 +76,14 @@ export class MainScene {
   private cameraHeight: number = 3;
   private cameraLerpFactor: number = 0.08;
 
-  // Límites del mapa
+  // Límites del mapa (Iniciales más conservadores)
   private mapBounds = {
-    minX: -1000,
-    maxX: 1000,
-    minZ: -1000,
-    maxZ: 1000,
+    minX: -400,
+    maxX: 400,
+    minZ: -400,
+    maxZ: 400,
   };
+  private mapRadius: number = 400; // Radio seguro circular
 
   constructor() {
     // Crear escena
@@ -109,6 +124,9 @@ export class MainScene {
     // Inicializar sistema de aros
     this.initRings();
 
+    // Crear flecha de dirección
+    this.createDirectionArrow();
+
     // Configurar iluminación
     this.setupLighting();
 
@@ -126,217 +144,114 @@ export class MainScene {
   }
 
   /**
-   * Inicializa los materiales y los primeros aros
+   * Inicializa los materiales y los aros dispersos
    */
   private initRings(): void {
-    // Geometría circular clásica (Radio 3, Tubo 0.3, 16 segmentos radiales, 32 tubulares)
-    this.ringGeometry = new THREE.TorusGeometry(3, 0.3, 16, 32);
+    // Geometría circular
+    this.ringGeometry = new THREE.TorusGeometry(4, 0.5, 16, 32);
 
-    // Material para el aro objetivo (Dorado/Amarillo brillante)
+    // Optimización: Geometría de explosión reutilizable
+    this.explosionGeometry = new THREE.TorusGeometry(3, 0.3, 16, 32);
+
+    // Material para los aros (Amarillo brillante - Power Up style)
     this.targetRingMaterial = new THREE.MeshToonMaterial({
-      color: 0xffd700,
+      color: 0xffff00,
       emissive: 0xaa6600,
       emissiveIntensity: 0.8,
     });
 
-    // Material para los siguientes aros (Azul neón)
-    this.nextRingMaterial = new THREE.MeshToonMaterial({
-      color: 0x00ffff,
-      transparent: true,
-      opacity: 0.6,
-      emissive: 0x0044aa,
-      emissiveIntensity: 0.2,
-    });
-
-    // Crear los 4 aros iniciales
-    // El primero un poco adelante de la posición inicial
-    let nextPos = new THREE.Vector3(0, 10, 30);
-    let prevPos = this.pigeon.position.clone();
-
-    for (let i = 0; i < 4; i++) {
-      this.spawnRing(nextPos, prevPos);
-      prevPos = nextPos.clone();
-      nextPos = this.generateNextRingPosition(nextPos);
+    // Generar 50 aros dispersos por el mapa
+    for (let i = 0; i < 50; i++) {
+      this.spawnRandomRing();
     }
-
-    this.updateRingColors();
   }
 
   /**
-   * Calcula la posición del siguiente aro basándose en el anterior
-   * para crear un camino infinito que se mantiene dentro del mapa
+   * Genera una posición aleatoria dentro de los límites del mapa
    */
-  private generateNextRingPosition(currentPos: THREE.Vector3): THREE.Vector3 {
-    const nextPos = currentPos.clone();
-    const distance = 40 + Math.random() * 20; // Distancia entre aros
+  private generateRandomPosition(): THREE.Vector3 {
+    // Usamos un 80% del mapa para evitar bordes extremos
+    const rangeX = (this.mapBounds.maxX - this.mapBounds.minX) * 0.4;
+    const rangeZ = (this.mapBounds.maxZ - this.mapBounds.minZ) * 0.4;
 
-    // 1. Variar la dirección actual aleatoriamente
-    // Giramos un poco el vector de dirección (entre -30 y +30 grados aprox)
-    const angleVariation = (Math.random() - 0.5) * 1.0;
-    this.ringPathDirection.applyAxisAngle(
-      new THREE.Vector3(0, 1, 0),
-      angleVariation
-    );
+    const x = (Math.random() - 0.5) * 2 * rangeX;
+    const z = (Math.random() - 0.5) * 2 * rangeZ;
+    const y = 10 + Math.random() * 60; // Altura variable
 
-    // 2. Comprobar si nos estamos alejando demasiado del centro o de los límites
-    // Usamos los límites calculados del mapa (mapBounds)
-    if (
-      nextPos.x < this.mapBounds.minX ||
-      nextPos.x > this.mapBounds.maxX ||
-      nextPos.z < this.mapBounds.minZ ||
-      nextPos.z > this.mapBounds.maxZ
-    ) {
-      // Calcular vector hacia el centro (0,0) para volver a la zona segura
-      const toCenter = new THREE.Vector3(0, 0, 0).sub(currentPos).normalize();
-
-      // Forzar el giro hacia el centro con más fuerza
-      this.ringPathDirection.lerp(toCenter, 0.5).normalize();
-
-      // Recalcular el movimiento con la nueva dirección corregida
-      const correctedMove = this.ringPathDirection
-        .clone()
-        .multiplyScalar(distance);
-
-      // Resetear nextPos y aplicar movimiento corregido
-      nextPos.copy(currentPos).add(correctedMove);
-    }
-
-    // 3. Calcular nueva posición
-    const moveVector = this.ringPathDirection.clone().multiplyScalar(distance);
-    nextPos.add(moveVector);
-
-    // 4. Variación de altura
-    nextPos.y += (Math.random() - 0.5) * 30;
-    nextPos.y = Math.max(10, Math.min(60, nextPos.y)); // Mantener altura jugable
-
-    return nextPos;
+    return new THREE.Vector3(x, y, z);
   }
 
   /**
-   * Crea un nuevo aro en la posición dada, orientado hacia la posición anterior
+   * Crea un nuevo aro en una posición aleatoria
    */
-  private spawnRing(position: THREE.Vector3, lookAtPos: THREE.Vector3): void {
-    const ring = new THREE.Mesh(this.ringGeometry, this.nextRingMaterial);
+  private spawnRandomRing(): void {
+    const pos = this.generateRandomPosition();
+    this.spawnRing(pos);
+  }
+
+  /**
+   * Crea un nuevo aro en la posición dada
+   */
+  private spawnRing(position: THREE.Vector3): void {
+    const ring = new THREE.Mesh(this.ringGeometry, this.targetRingMaterial);
     ring.position.copy(position);
     ring.castShadow = true;
 
-    // Orientar el aro para que mire hacia el aro anterior (o la paloma)
-    // Esto asegura que siempre se vea el "agujero" de frente al venir del punto anterior
-    ring.lookAt(lookAtPos);
+    // Rotación aleatoria o animada
+    ring.rotation.y = Math.random() * Math.PI * 2;
+
+    // Animación flotante (userData)
+    ring.userData = {
+      initialY: position.y,
+      floatSpeed: 1.0 + Math.random(),
+      floatOffset: Math.random() * Math.PI * 2,
+      rotationSpeed: 1.0 + Math.random(), // Velocidad de giro
+    };
 
     this.scene.add(ring);
     this.rings.push(ring);
   }
 
   /**
-   * Actualiza los colores de los aros (el primero es el objetivo)
-   */
-  private updateRingColors(): void {
-    this.rings.forEach((ring, index) => {
-      if (index === 0) {
-        ring.material = this.targetRingMaterial;
-        // Escalar un poco el objetivo para destacar
-        ring.scale.setScalar(1.2);
-      } else {
-        ring.material = this.nextRingMaterial;
-        ring.scale.setScalar(1.0);
-      }
-    });
-  }
-
-  /**
-   * Comprueba colisiones con el aro objetivo y gestiona la puntuación
+   * Comprueba colisiones con CUALQUIER aro
    */
   private checkRingCollisions(): void {
-    if (this.rings.length === 0) return;
+    // Iterar hacia atrás para poder eliminar elementos
+    for (let i = this.rings.length - 1; i >= 0; i--) {
+      const ring = this.rings[i];
+      const distance = this.pigeon.position.distanceTo(ring.position);
 
-    const targetRing = this.rings[0];
-    const distance = this.pigeon.position.distanceTo(targetRing.position);
-
-    // Radio de colisión (el aro tiene radio 3, así que 4 es generoso)
-    if (distance < 4) {
-      this.collectRing();
-      return;
+      // Radio de colisión
+      if (distance < 6) {
+        this.collectRing(i);
+      }
     }
-
-    // Si nos pasamos el aro (estamos detrás de él por un margen)
-    if (this.pigeon.position.z > targetRing.position.z + 5) {
-      this.missRing();
-    }
-  }
-
-  /**
-   * Gestiona cuando se pierde un aro (se pasa de largo)
-   */
-  private missRing(): void {
-    // 1. Eliminar el aro perdido
-    const missedRing = this.rings.shift();
-    if (missedRing) {
-      this.scene.remove(missedRing);
-    }
-
-    // 2. Generar uno nuevo al final
-    let nextPos: THREE.Vector3;
-    let prevPos: THREE.Vector3;
-
-    if (this.rings.length > 0) {
-      const lastRing = this.rings[this.rings.length - 1];
-      prevPos = lastRing.position.clone();
-      nextPos = this.generateNextRingPosition(lastRing.position);
-    } else {
-      prevPos = this.pigeon.position.clone();
-      nextPos = this.pigeon.position.clone();
-      nextPos.z += 50;
-    }
-
-    this.spawnRing(nextPos, prevPos);
-    this.updateRingColors();
   }
 
   /**
    * Gestiona la recolección de un aro
    */
-  private collectRing(): void {
-    // 1. Eliminar el aro actual
-    const collectedRing = this.rings.shift();
-    if (collectedRing) {
-      // Crear efecto visual antes de eliminar
-      this.createRingExplosion(collectedRing.position, collectedRing.rotation);
-      this.scene.remove(collectedRing);
-    }
+  private collectRing(index: number): void {
+    const collectedRing = this.rings[index];
 
-    // 2. Incrementar puntuación
+    // Crear efecto visual
+    this.createRingExplosion(collectedRing.position, collectedRing.rotation);
+
+    // Eliminar de la escena y del array
+    this.scene.remove(collectedRing);
+    this.rings.splice(index, 1);
+
+    // Incrementar puntuación
     this.score++;
     if (this.scoreElement) {
       this.scoreElement.innerText = this.score.toString();
-    } else {
-      // Intentar recuperar el elemento si no se encontró al inicio
-      this.scoreElement = document.getElementById("score-container");
-      if (this.scoreElement)
-        this.scoreElement.innerText = this.score.toString();
     }
 
-    // 3. Generar un nuevo aro al final
-    let nextPos: THREE.Vector3;
-    let prevPos: THREE.Vector3;
+    // EFECTO POWER-UP: Turbo
+    this.activateSpeedBoost();
 
-    if (this.rings.length > 0) {
-      // Tomamos la posición del último aro actual como referencia
-      const lastRing = this.rings[this.rings.length - 1];
-      prevPos = lastRing.position.clone();
-      nextPos = this.generateNextRingPosition(lastRing.position);
-    } else {
-      // Fallback de seguridad: si no hay aros, generar frente a la paloma
-      prevPos = this.pigeon.position.clone();
-      nextPos = this.pigeon.position.clone();
-      nextPos.z += 50;
-      nextPos.y = Math.max(10, nextPos.y); // Asegurar altura mínima
-    }
-
-    this.spawnRing(nextPos, prevPos);
-
-    // 4. Actualizar colores (el siguiente pasa a ser el objetivo)
-    this.updateRingColors();
+    // Generar un nuevo aro en otro lugar para mantener la cantidad
+    this.spawnRandomRing();
   }
 
   /**
@@ -347,8 +262,7 @@ export class MainScene {
     rotation: THREE.Euler
   ): void {
     // Crear un anillo que se expande y desvanece (misma forma que el original)
-    // Usamos la misma geometría circular suave: Radio 3, Tubo 0.3, 16 radial, 32 tubular
-    const geometry = new THREE.TorusGeometry(3, 0.3, 16, 32);
+    // Usamos la geometría reutilizada para optimizar
     const material = new THREE.MeshBasicMaterial({
       color: 0xffff00, // Amarillo brillante al explotar
       transparent: true,
@@ -356,7 +270,7 @@ export class MainScene {
       side: THREE.DoubleSide,
     });
 
-    const effect = new THREE.Mesh(geometry, material);
+    const effect = new THREE.Mesh(this.explosionGeometry, material);
     effect.position.copy(position);
     effect.rotation.copy(rotation);
 
@@ -369,6 +283,18 @@ export class MainScene {
 
     this.scene.add(effect);
     this.ringEffects.push(effect);
+  }
+
+  // Eliminado: spawnPowerUp
+  // Eliminado: checkPowerUpCollisions
+
+  /**
+   * Activa el turbo
+   */
+  private activateSpeedBoost(): void {
+    this.isSpeedBoostActive = true;
+    this.speedBoostTimer = 5.0; // 5 segundos de turbo
+    this.pigeonSpeed = this.boostSpeed;
   }
 
   /**
@@ -450,12 +376,27 @@ export class MainScene {
 
         // Ajustamos los límites para que estén casi en el borde visual
         // Reducimos el margen de seguridad a 20 unidades
-        this.mapBounds.minX = box.min.x + 20;
-        this.mapBounds.maxX = box.max.x - 20;
-        this.mapBounds.minZ = box.min.z + 20;
-        this.mapBounds.maxZ = box.max.z - 20;
+        // CLAMP: Limitamos los bordes detectados a un máximo de +/- 500 para evitar zonas vacías
+        const maxLimit = 500;
+        this.mapBounds.minX = Math.max(box.min.x + 50, -maxLimit);
+        this.mapBounds.maxX = Math.min(box.max.x - 50, maxLimit);
+        this.mapBounds.minZ = Math.max(box.min.z + 50, -maxLimit);
+        this.mapBounds.maxZ = Math.min(box.max.z - 50, maxLimit);
 
-        console.log("Límites del mapa calculados:", this.mapBounds);
+        // Calcular radio seguro (la menor distancia al centro desde los bordes)
+        this.mapRadius = Math.min(
+          Math.abs(this.mapBounds.minX),
+          Math.abs(this.mapBounds.maxX),
+          Math.abs(this.mapBounds.minZ),
+          Math.abs(this.mapBounds.maxZ)
+        );
+
+        console.log(
+          "Límites del mapa calculados:",
+          this.mapBounds,
+          "Radio:",
+          this.mapRadius
+        );
 
         // Configurar sombras y materiales
         mapModel.traverse((child) => {
@@ -562,6 +503,32 @@ export class MainScene {
 
     this.scene.add(pigeonGroup);
     return pigeonGroup;
+  }
+
+  /**
+   * Crea una flecha indicadora de dirección (Mini icono)
+   */
+  private createDirectionArrow(): void {
+    const arrowGroup = new THREE.Group();
+
+    // Cono de la flecha (Más pequeño)
+    const coneGeo = new THREE.ConeGeometry(0.2, 0.6, 8);
+    coneGeo.rotateX(Math.PI / 2); // Apuntar en Z
+    const coneMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+    const cone = new THREE.Mesh(coneGeo, coneMat);
+    cone.position.z = 0.4;
+    arrowGroup.add(cone);
+
+    // Base de la flecha (Más fina y corta)
+    const cylGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.6, 8);
+    cylGeo.rotateX(Math.PI / 2);
+    const cylMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+    const cylinder = new THREE.Mesh(cylGeo, cylMat);
+    cylinder.position.z = -0.2;
+    arrowGroup.add(cylinder);
+
+    this.scene.add(arrowGroup);
+    this.directionArrow = arrowGroup as unknown as THREE.Mesh;
   }
 
   /**
@@ -875,13 +842,92 @@ export class MainScene {
       }
     }
 
-    // Rotar el aro objetivo para destacarlo
-    if (this.rings.length > 0) {
-      this.rings[0].rotation.z += 1.0 * delta; // Rotación constante por segundo
-    }
+    // Animar Power-ups (Eliminado)
+    // this.powerUps.forEach((pu) => { ... });
+
+    // Rotar los aros dispersos
+    this.rings.forEach((ring) => {
+      if (ring.userData.rotationSpeed) {
+        ring.rotation.y += ring.userData.rotationSpeed * delta;
+      }
+      // Flotar
+      if (ring.userData.initialY) {
+        ring.position.y =
+          ring.userData.initialY +
+          Math.sin(
+            this.clock.getElapsedTime() * ring.userData.floatSpeed +
+              ring.userData.floatOffset
+          ) *
+            1.5;
+      }
+    });
 
     // Comprobar colisiones con aros
     this.checkRingCollisions();
+
+    // Comprobar colisiones con Power-ups (Eliminado)
+    // this.checkPowerUpCollisions();    // Gestionar Turbo
+    if (this.isSpeedBoostActive) {
+      this.speedBoostTimer -= delta;
+      if (this.speedBoostTimer <= 0) {
+        this.isSpeedBoostActive = false;
+        this.pigeonSpeed = this.baseSpeed;
+      }
+
+      // Generar estela de velocidad
+      if (Math.random() < 0.5) {
+        // No en cada frame
+        const trailGeo = new THREE.BoxGeometry(0.2, 0.2, 8);
+        const trailMat = new THREE.MeshBasicMaterial({
+          color: 0x00ffff,
+          transparent: true,
+          opacity: 0.6,
+        });
+        const trail = new THREE.Mesh(trailGeo, trailMat);
+
+        // Posición aleatoria alrededor de la paloma
+        const offset = new THREE.Vector3(
+          (Math.random() - 0.5) * 6,
+          (Math.random() - 0.5) * 6,
+          -2
+        );
+        offset.applyEuler(this.pigeon.rotation);
+        trail.position.copy(this.pigeon.position).add(offset);
+        trail.rotation.copy(this.pigeon.rotation);
+
+        this.scene.add(trail);
+        this.trailParticles.push(trail);
+      }
+    }
+
+    // Actualizar partículas de estela
+    for (let i = this.trailParticles.length - 1; i >= 0; i--) {
+      const p = this.trailParticles[i];
+      // Mover hacia atrás relativo a su rotación para simular viento
+      const backward = new THREE.Vector3(0, 0, 1)
+        .applyEuler(p.rotation)
+        .multiplyScalar(delta * 5);
+      p.position.sub(backward);
+
+      if (p.material instanceof THREE.Material) {
+        p.material.opacity -= delta * 2.0;
+        if (p.material.opacity <= 0) {
+          this.scene.remove(p);
+          p.geometry.dispose();
+          p.material.dispose();
+          this.trailParticles.splice(i, 1);
+        }
+      }
+    }
+
+    // Efecto FOV dinámico
+    const targetFOV = this.isSpeedBoostActive ? 110 : 75;
+    this.camera.fov = THREE.MathUtils.lerp(
+      this.camera.fov,
+      targetFOV,
+      delta * 2
+    );
+    this.camera.updateProjectionMatrix();
 
     // Limitar altura mínima (suelo aproximado)
     if (this.pigeon.position.y < 2) {
@@ -913,6 +959,32 @@ export class MainScene {
 
     // Actualizar cámara
     this.updateCamera();
+
+    // Actualizar flecha de dirección
+    if (this.directionArrow) {
+      // Posicionar flecha sobre la paloma
+      this.directionArrow.position.copy(this.pigeon.position);
+      this.directionArrow.position.y += 3; // Flotar encima
+
+      // Buscar el aro más cercano para apuntar
+      let closestRing: THREE.Mesh | null = null;
+      let minDistance = Infinity;
+
+      for (const ring of this.rings) {
+        const dist = this.pigeon.position.distanceTo(ring.position);
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestRing = ring;
+        }
+      }
+
+      if (closestRing) {
+        this.directionArrow.lookAt(closestRing.position);
+        this.directionArrow.visible = true;
+      } else {
+        this.directionArrow.visible = false;
+      }
+    }
 
     // Mover el cielo con la paloma para dar sensación de infinito
     // Esto evita que nos salgamos de la esfera del cielo o veamos artefactos
