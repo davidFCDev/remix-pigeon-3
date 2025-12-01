@@ -17,14 +17,24 @@ export class MainScene {
   private ground: THREE.Object3D; // El terreno (ahora puede ser un Group del GLB)
   private sky: THREE.Mesh | null = null; // El cielo
 
-  // Sistema de puntuación y aros
-  private rings: THREE.Mesh[] = [];
+  // Sistema de puntuación (Donuts)
+  private donuts: THREE.Group[] = [];
+  private donutModel: THREE.Group | null = null;
   private score: number = 0;
   private scoreElement: HTMLElement | null = null;
-  private ringGeometry!: THREE.TorusGeometry;
-  private targetRingMaterial!: THREE.MeshToonMaterial;
-  private nextRingMaterial!: THREE.MeshToonMaterial;
+
+  // Sistema de Power-ups (Aros)
+  private powerUps: THREE.Mesh[] = [];
+  private powerUpGeometry!: THREE.TorusGeometry;
+  private powerUpMaterial!: THREE.MeshToonMaterial;
   private ringEffects: THREE.Mesh[] = []; // Efectos visuales de aros
+
+  // Assets cargados
+  private assetsLoaded: boolean = false;
+  private mapPopulated: boolean = false;
+
+  // Obstáculos para evitar colisiones al colocar edificios
+  private obstacles: THREE.Vector3[] = [];
 
   // Power-ups y Efectos
   // private powerUps: THREE.Mesh[] = []; // Eliminado
@@ -36,9 +46,6 @@ export class MainScene {
   private baseSpeed: number = 25.0;
   private boostSpeed: number = 80.0; // Ultravelocidad
   private trailParticles: THREE.Mesh[] = [];
-
-  // Indicadores
-  private directionArrow: THREE.Mesh | null = null;
 
   // Animación
   private mixer: THREE.AnimationMixer | null = null;
@@ -121,11 +128,8 @@ export class MainScene {
     // this.createRocks(); // Se mueven al callback de createGround
     this.pigeon = this.createPigeon();
 
-    // Inicializar sistema de aros
-    this.initRings();
-
-    // Crear flecha de dirección
-    this.createDirectionArrow();
+    // Inicializar objetos del juego
+    this.initGameObjects();
 
     // Configurar iluminación
     this.setupLighting();
@@ -137,33 +141,91 @@ export class MainScene {
     this.setupControls();
 
     // Obtener referencia al elemento de puntuación
-    this.scoreElement = document.getElementById("score-container");
+    this.scoreElement = document.getElementById("score-value");
+    if (this.scoreElement) this.scoreElement.style.display = "none";
 
     // Iniciar loop de animación
     this.animate();
   }
 
   /**
-   * Inicializa los materiales y los aros dispersos
+   * Inicializa todos los objetos interactivos (Donuts y Power-ups)
    */
-  private initRings(): void {
-    // Geometría circular
-    this.ringGeometry = new THREE.TorusGeometry(4, 0.5, 16, 32);
-
+  private initGameObjects(): void {
     // Optimización: Geometría de explosión reutilizable
     this.explosionGeometry = new THREE.TorusGeometry(3, 0.3, 16, 32);
 
-    // Material para los aros (Amarillo brillante - Power Up style)
-    this.targetRingMaterial = new THREE.MeshToonMaterial({
+    this.initPowerUps();
+    this.initDonuts();
+  }
+
+  /**
+   * Inicializa los Power-ups (Aros amarillos para velocidad)
+   */
+  private initPowerUps(): void {
+    // Geometría circular
+    this.powerUpGeometry = new THREE.TorusGeometry(4, 0.5, 16, 32);
+
+    // Material para los aros (Amarillo brillante)
+    this.powerUpMaterial = new THREE.MeshToonMaterial({
       color: 0xffff00,
       emissive: 0xaa6600,
       emissiveIntensity: 0.8,
     });
 
-    // Generar 50 aros dispersos por el mapa
-    for (let i = 0; i < 50; i++) {
-      this.spawnRandomRing();
+    // Generar 15 Power-ups dispersos
+    for (let i = 0; i < 15; i++) {
+      this.spawnRandomPowerUp();
     }
+  }
+
+  /**
+   * Inicializa los Donuts (Puntos)
+   */
+  private initDonuts(): void {
+    // Cargar modelo del donut
+    const loader = new GLTFLoader();
+    loader.load(
+      "/donut.glb",
+      (gltf) => {
+        console.log("Donut model loaded");
+        this.donutModel = gltf.scene;
+
+        // Configurar sombras para el modelo base
+        this.donutModel.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+
+        // Ajustar escala base
+        this.donutModel.scale.set(3, 3, 3);
+
+        // Generar los donuts iniciales
+        for (let i = 0; i < 30; i++) {
+          this.spawnRandomDonut();
+        }
+      },
+      undefined,
+      (error) => {
+        console.error("Error loading donut.glb, using fallback", error);
+        this.createFallbackDonutModel();
+        for (let i = 0; i < 30; i++) {
+          this.spawnRandomDonut();
+        }
+      }
+    );
+  }
+
+  private createFallbackDonutModel(): void {
+    const group = new THREE.Group();
+    const geometry = new THREE.TorusGeometry(2, 1, 16, 32);
+    const material = new THREE.MeshToonMaterial({ color: 0xff69b4 }); // Hot pink
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true;
+    group.add(mesh);
+    this.donutModel = group;
   }
 
   /**
@@ -176,70 +238,138 @@ export class MainScene {
 
     const x = (Math.random() - 0.5) * 2 * rangeX;
     const z = (Math.random() - 0.5) * 2 * rangeZ;
-    const y = 10 + Math.random() * 60; // Altura variable
+
+    // Altura reducida para los aros (más cerca del suelo)
+    // Antes: 10 + random * 60. Ahora: 5 + random * 25
+    const y = 5 + Math.random() * 25;
 
     return new THREE.Vector3(x, y, z);
   }
 
   /**
-   * Crea un nuevo aro en una posición aleatoria
+   * Crea un nuevo Power-up en una posición aleatoria
    */
-  private spawnRandomRing(): void {
+  private spawnRandomPowerUp(): void {
     const pos = this.generateRandomPosition();
-    this.spawnRing(pos);
+    this.spawnPowerUp(pos);
   }
 
   /**
-   * Crea un nuevo aro en la posición dada
+   * Crea un nuevo Donut en una posición aleatoria
    */
-  private spawnRing(position: THREE.Vector3): void {
-    const ring = new THREE.Mesh(this.ringGeometry, this.targetRingMaterial);
-    ring.position.copy(position);
-    ring.castShadow = true;
+  private spawnRandomDonut(): void {
+    const pos = this.generateRandomPosition();
+    this.spawnDonut(pos);
+  }
 
-    // Rotación aleatoria o animada
-    ring.rotation.y = Math.random() * Math.PI * 2;
+  /**
+   * Crea un nuevo Power-up (Aro) en la posición dada
+   */
+  private spawnPowerUp(position: THREE.Vector3): void {
+    const powerUp = new THREE.Mesh(this.powerUpGeometry, this.powerUpMaterial);
+    powerUp.position.copy(position);
+    powerUp.castShadow = true;
+
+    // Apuntar siempre al centro del mapa (0, Y, 0)
+    powerUp.lookAt(0, position.y, 0);
 
     // Animación flotante (userData)
-    ring.userData = {
+    powerUp.userData = {
       initialY: position.y,
       floatSpeed: 1.0 + Math.random(),
       floatOffset: Math.random() * Math.PI * 2,
-      rotationSpeed: 1.0 + Math.random(), // Velocidad de giro
+      rotationSpeed: 0, // Ya no rotan sobre sí mismos para mantener la orientación al centro
     };
 
-    this.scene.add(ring);
-    this.rings.push(ring);
+    this.scene.add(powerUp);
+    this.powerUps.push(powerUp);
   }
 
   /**
-   * Comprueba colisiones con CUALQUIER aro
+   * Crea un nuevo Donut en la posición dada
    */
-  private checkRingCollisions(): void {
-    // Iterar hacia atrás para poder eliminar elementos
-    for (let i = this.rings.length - 1; i >= 0; i--) {
-      const ring = this.rings[i];
-      const distance = this.pigeon.position.distanceTo(ring.position);
+  private spawnDonut(position: THREE.Vector3): void {
+    if (!this.donutModel) return;
 
-      // Radio de colisión
+    const donut = this.donutModel.clone();
+    donut.position.copy(position);
+    
+    // Orientación aleatoria inicial
+    donut.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+
+    // Animación flotante (userData)
+    donut.userData = {
+      initialY: position.y,
+      floatSpeed: 1.0 + Math.random(),
+      floatOffset: Math.random() * Math.PI * 2,
+      rotationSpeed: new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2,
+        0
+      ),
+    };
+
+    this.scene.add(donut);
+    this.donuts.push(donut);
+  }
+
+  /**
+   * Comprueba colisiones con Power-ups y Donuts
+   */
+  private checkCollisions(): void {
+    // 1. Power-ups (Aros)
+    for (let i = this.powerUps.length - 1; i >= 0; i--) {
+      const powerUp = this.powerUps[i];
+      const distance = this.pigeon.position.distanceTo(powerUp.position);
+
       if (distance < 6) {
-        this.collectRing(i);
+        this.collectPowerUp(i);
+      }
+    }
+
+    // 2. Donuts (Puntos)
+    for (let i = this.donuts.length - 1; i >= 0; i--) {
+      const donut = this.donuts[i];
+      const distance = this.pigeon.position.distanceTo(donut.position);
+
+      if (distance < 6) {
+        this.collectDonut(i);
       }
     }
   }
 
   /**
-   * Gestiona la recolección de un aro
+   * Gestiona la recolección de un Power-up (Velocidad)
    */
-  private collectRing(index: number): void {
-    const collectedRing = this.rings[index];
+  private collectPowerUp(index: number): void {
+    const collectedPowerUp = this.powerUps[index];
 
-    // Crear efecto visual
-    this.createRingExplosion(collectedRing.position, collectedRing.rotation);
+    // Efecto visual
+    this.createRingExplosion(collectedPowerUp.position, collectedPowerUp.rotation);
 
-    // Eliminar de la escena y del array
-    this.scene.remove(collectedRing);
-    this.rings.splice(index, 1);
+    // Eliminar
+    this.scene.remove(collectedPowerUp);
+    this.powerUps.splice(index, 1);
+
+    // Activar Turbo
+    this.activateSpeedBoost();
+
+    // Reponer Power-up
+    this.spawnRandomPowerUp();
+  }
+
+  /**
+   * Gestiona la recolección de un Donut (Puntos)
+   */
+  private collectDonut(index: number): void {
+    const collectedDonut = this.donuts[index];
+
+    // Efecto visual (podríamos hacerlo diferente, pero reutilizamos la explosión por ahora)
+    this.createRingExplosion(collectedDonut.position, collectedDonut.rotation);
+
+    // Eliminar
+    this.scene.remove(collectedDonut);
+    this.donuts.splice(index, 1);
 
     // Incrementar puntuación
     this.score++;
@@ -247,11 +377,8 @@ export class MainScene {
       this.scoreElement.innerText = this.score.toString();
     }
 
-    // EFECTO POWER-UP: Turbo
-    this.activateSpeedBoost();
-
-    // Generar un nuevo aro en otro lugar para mantener la cantidad
-    this.spawnRandomRing();
+    // Reponer Donut
+    this.spawnRandomDonut();
   }
 
   /**
@@ -293,8 +420,8 @@ export class MainScene {
    */
   private activateSpeedBoost(): void {
     this.isSpeedBoostActive = true;
-    this.speedBoostTimer = 5.0; // 5 segundos de turbo
-    this.pigeonSpeed = this.boostSpeed;
+    this.speedBoostTimer = 2.0; // Reducido a 2 segundos
+    // La velocidad se ajusta suavemente en handleMovement
   }
 
   /**
@@ -423,8 +550,11 @@ export class MainScene {
         console.log("Mapa GLB cargado correctamente");
 
         // Una vez cargado el mapa, generamos la vegetación extra
-        this.createTrees();
-        this.createRocks();
+        // this.createTrees(); // Eliminado a petición del usuario
+        // this.createRocks(); // Eliminado a petición del usuario
+
+        // Marcar mapa como poblado
+        this.mapPopulated = true;
       },
       (xhr) => {
         console.log((xhr.loaded / xhr.total) * 100 + "% cargado del mapa");
@@ -443,7 +573,7 @@ export class MainScene {
     // IMPORTANTE: Orden YXZ para evitar Gimbal Lock.
     // Esto asegura que el Yaw (Y) se aplique primero, y luego el Pitch (X) sobre el eje rotado.
     pigeonGroup.rotation.order = "YXZ";
-    pigeonGroup.position.set(0, 5, 0);
+    pigeonGroup.position.set(0, 40, 0); // Empezar más alto para evitar colisiones iniciales
 
     // 1. Crear un placeholder (esfera) mientras carga el modelo
     const placeholderGeometry = new THREE.SphereGeometry(0.5, 16, 16);
@@ -506,32 +636,6 @@ export class MainScene {
   }
 
   /**
-   * Crea una flecha indicadora de dirección (Mini icono)
-   */
-  private createDirectionArrow(): void {
-    const arrowGroup = new THREE.Group();
-
-    // Cono de la flecha (Más pequeño)
-    const coneGeo = new THREE.ConeGeometry(0.2, 0.6, 8);
-    coneGeo.rotateX(Math.PI / 2); // Apuntar en Z
-    const coneMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-    const cone = new THREE.Mesh(coneGeo, coneMat);
-    cone.position.z = 0.4;
-    arrowGroup.add(cone);
-
-    // Base de la flecha (Más fina y corta)
-    const cylGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.6, 8);
-    cylGeo.rotateX(Math.PI / 2);
-    const cylMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-    const cylinder = new THREE.Mesh(cylGeo, cylMat);
-    cylinder.position.z = -0.2;
-    arrowGroup.add(cylinder);
-
-    this.scene.add(arrowGroup);
-    this.directionArrow = arrowGroup as unknown as THREE.Mesh;
-  }
-
-  /**
    * Carga y distribuye árboles por el mapa
    */
   private createTrees(): void {
@@ -587,6 +691,9 @@ export class MainScene {
         // Reducido a 150 para móviles
         this.distributeObjects([rockModel], 150, 900, 2.0, 5.0);
         console.log("Rocas generadas");
+
+        // Marcar mapa como poblado
+        this.mapPopulated = true;
       },
       undefined,
       (err) => console.error("Error cargando rocas:", err)
@@ -638,6 +745,9 @@ export class MainScene {
       if (intersects.length > 0) {
         const groundPoint = intersects[0].point;
         instance.position.copy(groundPoint);
+
+        // Registrar como obstáculo para evitar que las misiones aparezcan encima
+        this.obstacles.push(groundPoint.clone());
 
         // Variación aleatoria
         const scale = minScale + Math.random() * (maxScale - minScale);
@@ -725,7 +835,8 @@ export class MainScene {
     // Si la paloma mira arriba, "atrás" es abajo.
 
     // Vector de offset local (ajusta estos valores para cambiar la distancia)
-    const relativeOffset = new THREE.Vector3(0, 4, -10);
+    // Acercamos la cámara (Z: -12 -> -7, Y: 5 -> 3.5)
+    const relativeOffset = new THREE.Vector3(0, 3.5, -7);
 
     // Aplicar la rotación de la paloma a este offset
     const cameraOffset = relativeOffset.applyEuler(this.pigeon.rotation);
@@ -739,7 +850,8 @@ export class MainScene {
 
     // Hacemos que la cámara mire un poco por delante de la paloma
     // Esto ayuda a ver hacia dónde vamos
-    const lookAtOffset = new THREE.Vector3(0, 0, 20); // 20 unidades adelante
+    // Bajamos el punto de mira (Y: 0 -> -2) para que la paloma aparezca más arriba en la pantalla
+    const lookAtOffset = new THREE.Vector3(0, -2, 20); // 20 unidades adelante
     lookAtOffset.applyEuler(this.pigeon.rotation);
     const lookAtTarget = this.pigeon.position.clone().add(lookAtOffset);
 
@@ -798,6 +910,17 @@ export class MainScene {
 
     // 3. Movimiento (WASD)
     let isMoving = false;
+
+    // Suavizado de velocidad (Aceleración/Deceleración del Turbo)
+    const targetSpeed = this.isSpeedBoostActive
+      ? this.boostSpeed
+      : this.baseSpeed;
+    this.pigeonSpeed = THREE.MathUtils.lerp(
+      this.pigeonSpeed,
+      targetSpeed,
+      delta * 2.0
+    );
+
     const moveSpeed = this.pigeonSpeed * delta;
 
     if (this.keys["KeyW"] || this.keys["ArrowUp"]) {
@@ -818,8 +941,9 @@ export class MainScene {
     // Actualizar animaciones del modelo si existen
     if (this.mixer) {
       this.mixer.update(delta);
-      const baseSpeed = isMoving ? 1.5 : 1.0;
-      this.mixer.timeScale = baseSpeed;
+      // Velocidad constante salvo con turbo
+      const animSpeed = this.isSpeedBoostActive ? 2.5 : 1.0;
+      this.mixer.timeScale = animSpeed;
     }
 
     // Animar efectos de aros
@@ -845,25 +969,40 @@ export class MainScene {
     // Animar Power-ups (Eliminado)
     // this.powerUps.forEach((pu) => { ... });
 
-    // Rotar los aros dispersos
-    this.rings.forEach((ring) => {
-      if (ring.userData.rotationSpeed) {
-        ring.rotation.y += ring.userData.rotationSpeed * delta;
+    // Rotar los Power-ups
+    this.powerUps.forEach((pu) => {
+      if (pu.userData.rotationSpeed) {
+        pu.rotation.y += 2.0 * delta; // Rotación simple para aros
       }
       // Flotar
-      if (ring.userData.initialY) {
-        ring.position.y =
-          ring.userData.initialY +
+      if (pu.userData.initialY) {
+        pu.position.y =
+          pu.userData.initialY +
           Math.sin(
-            this.clock.getElapsedTime() * ring.userData.floatSpeed +
-              ring.userData.floatOffset
-          ) *
-            1.5;
+            this.clock.getElapsedTime() * 1.5 + pu.userData.floatOffset
+          ) * 1.5;
       }
     });
 
-    // Comprobar colisiones con aros
-    this.checkRingCollisions();
+    // Rotar los Donuts
+    this.donuts.forEach((donut) => {
+      if (donut.userData.rotationSpeed) {
+        donut.rotation.x += donut.userData.rotationSpeed.x * delta;
+        donut.rotation.y += donut.userData.rotationSpeed.y * delta;
+      }
+      // Flotar
+      if (donut.userData.initialY) {
+        donut.position.y =
+          donut.userData.initialY +
+          Math.sin(
+            this.clock.getElapsedTime() * donut.userData.floatSpeed +
+              donut.userData.floatOffset
+          ) * 1.5;
+      }
+    });
+
+    // Comprobar colisiones
+    this.checkCollisions();
 
     // Comprobar colisiones con Power-ups (Eliminado)
     // this.checkPowerUpCollisions();    // Gestionar Turbo
@@ -871,7 +1010,7 @@ export class MainScene {
       this.speedBoostTimer -= delta;
       if (this.speedBoostTimer <= 0) {
         this.isSpeedBoostActive = false;
-        this.pigeonSpeed = this.baseSpeed;
+        // No reseteamos pigeonSpeed aquí para permitir que el lerp lo haga suavemente
       }
 
       // Generar estela de velocidad
@@ -921,11 +1060,12 @@ export class MainScene {
     }
 
     // Efecto FOV dinámico
-    const targetFOV = this.isSpeedBoostActive ? 110 : 75;
+    // Ajustado: Zoom mucho más suave (85 en lugar de 90)
+    const targetFOV = this.isSpeedBoostActive ? 85 : 75;
     this.camera.fov = THREE.MathUtils.lerp(
       this.camera.fov,
       targetFOV,
-      delta * 2
+      delta * 1.0
     );
     this.camera.updateProjectionMatrix();
 
@@ -959,32 +1099,6 @@ export class MainScene {
 
     // Actualizar cámara
     this.updateCamera();
-
-    // Actualizar flecha de dirección
-    if (this.directionArrow) {
-      // Posicionar flecha sobre la paloma
-      this.directionArrow.position.copy(this.pigeon.position);
-      this.directionArrow.position.y += 3; // Flotar encima
-
-      // Buscar el aro más cercano para apuntar
-      let closestRing: THREE.Mesh | null = null;
-      let minDistance = Infinity;
-
-      for (const ring of this.rings) {
-        const dist = this.pigeon.position.distanceTo(ring.position);
-        if (dist < minDistance) {
-          minDistance = dist;
-          closestRing = ring;
-        }
-      }
-
-      if (closestRing) {
-        this.directionArrow.lookAt(closestRing.position);
-        this.directionArrow.visible = true;
-      } else {
-        this.directionArrow.visible = false;
-      }
-    }
 
     // Mover el cielo con la paloma para dar sensación de infinito
     // Esto evita que nos salgamos de la esfera del cielo o veamos artefactos
