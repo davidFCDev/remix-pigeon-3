@@ -1,6 +1,7 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
-import GameSettings from "../config/GameSettings";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
+import { AudioManager } from "../systems/AudioManager";
 
 /**
  * MainScene - Escena principal del juego de la Paloma 3D
@@ -11,6 +12,9 @@ export class MainScene {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private renderer: THREE.WebGLRenderer;
+
+  // Audio
+  private audioManager: AudioManager;
 
   // Objetos del juego
   private pigeon: THREE.Group; // Contenedor para la paloma
@@ -26,9 +30,18 @@ export class MainScene {
   // Sistema de Hambre
   private maxHunger: number = 100;
   private currentHunger: number = 100;
-  private hungerDepletionRate: number = 5.0; // Puntos por segundo
+  private hungerDepletionRate: number = 3.0; // Puntos por segundo (Reducido para que dure más)
   private hungerBarElement: HTMLElement | null = null;
   private isGameOver: boolean = false;
+
+  // Enemigos (Flamingos)
+  private flamingos: {
+    mesh: THREE.Group;
+    speed: number;
+    targetIndex: number | null;
+  }[] = [];
+  private flamingoModel: THREE.Group | null = null;
+  private flamingoMixers: THREE.AnimationMixer[] = [];
 
   // Sistema de Power-ups (Aros)
   private powerUps: THREE.Mesh[] = [];
@@ -100,7 +113,15 @@ export class MainScene {
   };
   private mapRadius: number = 400; // Radio seguro circular
 
-  constructor() {
+  // Controles Móviles
+  private isTurningLeft: boolean = false;
+  private isTurningRight: boolean = false;
+  private currentTurnSpeed: number = 0; // Para suavizar el giro en móvil
+
+  private assets: { [key: string]: any };
+
+  constructor(assets: { [key: string]: any }) {
+    this.assets = assets;
     // Crear escena
     this.scene = new THREE.Scene();
 
@@ -110,19 +131,35 @@ export class MainScene {
     // this.scene.fog = new THREE.Fog(skyColor, 100, 900) // Niebla un poco más lejos
 
     // Crear cámara en perspectiva
-    const aspectRatio = GameSettings.canvas.width / GameSettings.canvas.height;
+    // Usar dimensiones de la ventana en lugar de GameSettings fijo
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const aspectRatio = width / height;
+
     // Aumentamos el plano lejano (far) a 4000 para evitar clipping con el cielo
     this.camera = new THREE.PerspectiveCamera(75, aspectRatio, 0.1, 4000);
 
-    // Crear renderer
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setSize(
-      GameSettings.canvas.width,
-      GameSettings.canvas.height
-    );
-    this.renderer.setPixelRatio(window.devicePixelRatio); // Importante para nitidez en pantallas HD/Retina
-    this.renderer.shadowMap.enabled = true;
+    // Crear renderer - Optimizado para móviles
+    const isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      );
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: !isMobile, // Desactivar antialiasing en móviles
+      powerPreference: "high-performance",
+    });
+    this.renderer.setSize(width, height);
+    this.renderer.setPixelRatio(
+      isMobile ? 1 : Math.min(window.devicePixelRatio, 2)
+    ); // Reducir resolución en móviles
+    this.renderer.shadowMap.enabled = !isMobile; // Desactivar sombras en móviles
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // Manejar redimensionamiento de ventana
+    window.addEventListener("resize", this.handleResize);
+
+    // Inicializar Audio
+    this.audioManager = new AudioManager();
 
     // Crear elementos del juego
     this.createSky(); // Cielo mejorado
@@ -143,10 +180,11 @@ export class MainScene {
     this.setupLighting();
 
     // Configurar posición inicial de la cámara
-    this.updateCamera();
+    this.updateCamera(true);
 
     // Configurar controles de teclado
     this.setupControls();
+    this.setupMobileControls();
 
     // Obtener referencia al elemento de puntuación
     this.scoreElement = document.getElementById("score-value");
@@ -160,6 +198,21 @@ export class MainScene {
   }
 
   /**
+   * Maneja el redimensionamiento de la ventana
+   */
+  private handleResize = (): void => {
+    if (!this.camera || !this.renderer) return;
+
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+
+    this.renderer.setSize(width, height);
+  };
+
+  /**
    * Inicializa todos los objetos interactivos (Donuts y Power-ups)
    */
   private initGameObjects(): void {
@@ -168,6 +221,82 @@ export class MainScene {
 
     this.initPowerUps();
     this.initDonuts();
+    this.initFlamingos();
+  }
+
+  /**
+   * Inicializa los Flamingos (Enemigos)
+   */
+  private initFlamingos(): void {
+    const gltf = this.assets["flamingo"];
+    if (gltf) {
+      console.log("Flamingo model loaded from cache");
+      this.flamingoModel = gltf.scene;
+
+      // Configurar sombras
+      this.flamingoModel!.traverse((child: THREE.Object3D) => {
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+
+          // FORZAR MATERIAL ROSA (Fix visual)
+          const pinkMaterial = new THREE.MeshToonMaterial({
+            color: 0xff88aa, // Rosa flamingo
+            emissive: 0x442222, // Un poco de brillo propio
+            side: THREE.DoubleSide,
+          });
+          child.material = pinkMaterial;
+        }
+      });
+
+      // Ajustar escala
+      this.flamingoModel!.scale.set(0.03, 0.03, 0.03);
+
+      // Generar 8 flamingos iniciales
+      for (let i = 0; i < 8; i++) {
+        this.spawnFlamingo(gltf.animations);
+      }
+    } else {
+      console.error("Flamingo asset not found in cache");
+    }
+  }
+
+  /**
+   * Crea un nuevo Flamingo
+   */
+  private spawnFlamingo(animations: THREE.AnimationClip[]): void {
+    if (!this.flamingoModel) return;
+
+    const flamingo = SkeletonUtils.clone(this.flamingoModel) as THREE.Group;
+
+    // Posición aleatoria dispersa (usando casi todo el mapa)
+    // Usamos 0.48 para cubrir el 96% del mapa y evitar que se agrupen en el centro
+    const rangeX = (this.mapBounds.maxX - this.mapBounds.minX) * 0.48;
+    const rangeZ = (this.mapBounds.maxZ - this.mapBounds.minZ) * 0.48;
+
+    const x = (Math.random() - 0.5) * 2 * rangeX;
+    const z = (Math.random() - 0.5) * 2 * rangeZ;
+    const y = 20 + Math.random() * 30; // Altura de vuelo
+
+    flamingo.position.set(x, y, z);
+
+    this.scene.add(flamingo);
+
+    // Configurar animación
+    if (animations && animations.length > 0) {
+      const mixer = new THREE.AnimationMixer(flamingo);
+      const action = mixer.clipAction(animations[0]);
+      action.play();
+      // Velocidad de animación aleatoria para que no vayan sincronizados
+      mixer.timeScale = 0.8 + Math.random() * 0.4;
+      this.flamingoMixers.push(mixer);
+    }
+
+    this.flamingos.push({
+      mesh: flamingo,
+      speed: 15.0 + Math.random() * 10.0, // Velocidad entre 15 y 25
+      targetIndex: null,
+    });
   }
 
   /**
@@ -194,39 +323,33 @@ export class MainScene {
    * Inicializa los Donuts (Puntos)
    */
   private initDonuts(): void {
-    // Cargar modelo del donut
-    const loader = new GLTFLoader();
-    loader.load(
-      "/donut.glb",
-      (gltf) => {
-        console.log("Donut model loaded");
-        this.donutModel = gltf.scene;
+    const gltf = this.assets["donut"];
+    if (gltf) {
+      console.log("Donut model loaded from cache");
+      this.donutModel = gltf.scene;
 
-        // Configurar sombras para el modelo base
-        this.donutModel.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-          }
-        });
-
-        // Ajustar escala base
-        this.donutModel.scale.set(3, 3, 3);
-
-        // Generar los donuts iniciales
-        for (let i = 0; i < 30; i++) {
-          this.spawnRandomDonut();
+      // Configurar sombras para el modelo base
+      this.donutModel!.traverse((child: THREE.Object3D) => {
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
         }
-      },
-      undefined,
-      (error) => {
-        console.error("Error loading donut.glb, using fallback", error);
-        this.createFallbackDonutModel();
-        for (let i = 0; i < 30; i++) {
-          this.spawnRandomDonut();
-        }
+      });
+
+      // Ajustar escala base
+      this.donutModel!.scale.set(3, 3, 3);
+
+      // Generar los donuts iniciales
+      for (let i = 0; i < 30; i++) {
+        this.spawnRandomDonut();
       }
-    );
+    } else {
+      console.error("Donut asset not found in cache, using fallback");
+      this.createFallbackDonutModel();
+      for (let i = 0; i < 30; i++) {
+        this.spawnRandomDonut();
+      }
+    }
   }
 
   private createFallbackDonutModel(): void {
@@ -243,16 +366,15 @@ export class MainScene {
    * Genera una posición aleatoria dentro de los límites del mapa
    */
   private generateRandomPosition(): THREE.Vector3 {
-    // Usamos un 80% del mapa para evitar bordes extremos
-    const rangeX = (this.mapBounds.maxX - this.mapBounds.minX) * 0.4;
-    const rangeZ = (this.mapBounds.maxZ - this.mapBounds.minZ) * 0.4;
+    // Usamos un 96% del mapa para distribuir mejor los objetos y evitar acumulaciones
+    const rangeX = (this.mapBounds.maxX - this.mapBounds.minX) * 0.48;
+    const rangeZ = (this.mapBounds.maxZ - this.mapBounds.minZ) * 0.48;
 
     const x = (Math.random() - 0.5) * 2 * rangeX;
     const z = (Math.random() - 0.5) * 2 * rangeZ;
 
-    // Altura reducida para los aros (más cerca del suelo)
-    // Antes: 10 + random * 60. Ahora: 5 + random * 25
-    const y = 5 + Math.random() * 25;
+    // Altura FIJA para coincidir con la paloma
+    const y = 20;
 
     return new THREE.Vector3(x, y, z);
   }
@@ -371,6 +493,9 @@ export class MainScene {
   private collectPowerUp(index: number): void {
     const collectedPowerUp = this.powerUps[index];
 
+    // Reproducir sonido
+    this.audioManager.playPowerUpSound();
+
     // Efecto visual
     this.createRingExplosion(
       collectedPowerUp.position,
@@ -393,6 +518,9 @@ export class MainScene {
    */
   private collectDonut(index: number): void {
     const collectedDonut = this.donuts[index];
+
+    // Reproducir sonido
+    this.audioManager.playCollectSound();
 
     // Efecto visual: Explosión de partículas rosa suave
     this.createDonutExplosion(collectedDonut.position);
@@ -554,86 +682,59 @@ export class MainScene {
    * Carga el mapa desde un archivo GLB
    */
   private createGround(): void {
-    const loader = new GLTFLoader();
-    loader.load(
-      "/map.glb",
-      (gltf) => {
-        const mapModel = gltf.scene;
+    const gltf = this.assets["map"];
+    if (gltf) {
+      const mapModel = gltf.scene.clone(); // Clone to avoid modifying cached asset if reused
 
-        // Ajustar posición y escala si es necesario
-        // Mantenemos la posición Y = -15 que usábamos antes para que coincida con la altura de vuelo
-        mapModel.position.y = -15;
+      // Ajustar posición y escala si es necesario
+      mapModel.position.y = -15;
+      mapModel.scale.set(150, 150, 150);
 
-        // Escalamos el mapa significativamente (Aumentado de 50 a 150)
-        mapModel.scale.set(150, 150, 150);
+      mapModel.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(mapModel);
 
-        // Calcular los límites reales del mapa cargado
-        // Es importante actualizar la matriz de mundo antes de calcular la caja
-        mapModel.updateMatrixWorld(true);
-        const box = new THREE.Box3().setFromObject(mapModel);
+      const maxLimit = 500;
+      this.mapBounds.minX = Math.max(box.min.x + 50, -maxLimit);
+      this.mapBounds.maxX = Math.min(box.max.x - 50, maxLimit);
+      this.mapBounds.minZ = Math.max(box.min.z + 50, -maxLimit);
+      this.mapBounds.maxZ = Math.min(box.max.z - 50, maxLimit);
 
-        // Ajustamos los límites para que estén casi en el borde visual
-        // Reducimos el margen de seguridad a 20 unidades
-        // CLAMP: Limitamos los bordes detectados a un máximo de +/- 500 para evitar zonas vacías
-        const maxLimit = 500;
-        this.mapBounds.minX = Math.max(box.min.x + 50, -maxLimit);
-        this.mapBounds.maxX = Math.min(box.max.x - 50, maxLimit);
-        this.mapBounds.minZ = Math.max(box.min.z + 50, -maxLimit);
-        this.mapBounds.maxZ = Math.min(box.max.z - 50, maxLimit);
+      this.mapRadius = Math.min(
+        Math.abs(this.mapBounds.minX),
+        Math.abs(this.mapBounds.maxX),
+        Math.abs(this.mapBounds.minZ),
+        Math.abs(this.mapBounds.maxZ)
+      );
 
-        // Calcular radio seguro (la menor distancia al centro desde los bordes)
-        this.mapRadius = Math.min(
-          Math.abs(this.mapBounds.minX),
-          Math.abs(this.mapBounds.maxX),
-          Math.abs(this.mapBounds.minZ),
-          Math.abs(this.mapBounds.maxZ)
-        );
+      console.log(
+        "Límites del mapa calculados:",
+        this.mapBounds,
+        "Radio:",
+        this.mapRadius
+      );
 
-        console.log(
-          "Límites del mapa calculados:",
-          this.mapBounds,
-          "Radio:",
-          this.mapRadius
-        );
-
-        // Configurar sombras y materiales
-        mapModel.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.receiveShadow = true;
-            child.castShadow = false; // El terreno recibe sombras
-
-            // Respetar el material original del GLB
-            if (child.material) {
-              child.material.side = THREE.DoubleSide;
-              // Asegurarnos de que el material reaccione a la luz si es posible
-              if (child.material instanceof THREE.MeshStandardMaterial) {
-                child.material.roughness = 0.8; // Ajuste para que no brille demasiado
-              }
+      mapModel.traverse((child: THREE.Object3D) => {
+        if (child instanceof THREE.Mesh) {
+          child.receiveShadow = true;
+          child.castShadow = false;
+          if (child.material) {
+            child.material.side = THREE.DoubleSide;
+            if (child.material instanceof THREE.MeshStandardMaterial) {
+              child.material.roughness = 0.8;
             }
           }
-        });
+        }
+      });
 
-        // Reemplazar el objeto ground temporal
-        this.scene.remove(this.ground);
-        this.ground = mapModel;
-        this.scene.add(this.ground);
+      this.scene.remove(this.ground);
+      this.ground = mapModel;
+      this.scene.add(this.ground);
 
-        console.log("Mapa GLB cargado correctamente");
-
-        // Una vez cargado el mapa, generamos la vegetación extra
-        // this.createTrees(); // Eliminado a petición del usuario
-        // this.createRocks(); // Eliminado a petición del usuario
-
-        // Marcar mapa como poblado
-        this.mapPopulated = true;
-      },
-      (xhr) => {
-        console.log((xhr.loaded / xhr.total) * 100 + "% cargado del mapa");
-      },
-      (error) => {
-        console.error("Error cargando el mapa (map.glb):", error);
-      }
-    );
+      console.log("Mapa GLB cargado correctamente from cache");
+      this.mapPopulated = true;
+    } else {
+      console.error("Map asset not found in cache");
+    }
   }
 
   /**
@@ -641,66 +742,49 @@ export class MainScene {
    */
   private createPigeon(): THREE.Group {
     const pigeonGroup = new THREE.Group();
-    // IMPORTANTE: Orden YXZ para evitar Gimbal Lock.
-    // Esto asegura que el Yaw (Y) se aplique primero, y luego el Pitch (X) sobre el eje rotado.
     pigeonGroup.rotation.order = "YXZ";
-    pigeonGroup.position.set(0, 40, 0); // Empezar más alto para evitar colisiones iniciales
+    pigeonGroup.position.set(0, 40, 0);
 
-    // 1. Crear un placeholder (esfera) mientras carga el modelo
-    const placeholderGeometry = new THREE.SphereGeometry(0.5, 16, 16);
-    const placeholderMaterial = new THREE.MeshLambertMaterial({
-      color: 0x808080,
-      transparent: true,
-      opacity: 0.5,
-    });
-    const placeholder = new THREE.Mesh(
-      placeholderGeometry,
-      placeholderMaterial
-    );
-    pigeonGroup.add(placeholder);
+    const gltf = this.assets["pigeon"];
+    if (gltf) {
+      console.log("Modelo animado cargado correctamente from cache");
+      // Usar SkeletonUtils.clone para clonar correctamente SkinnedMeshes
+      const model = SkeletonUtils.clone(gltf.scene);
 
-    // 2. Cargar el modelo GLB animado
-    const loader = new GLTFLoader();
-    loader.load(
-      "/animated_bird_pigeon.glb",
-      (gltf) => {
-        console.log("Modelo animado cargado correctamente");
-        const model = gltf.scene;
-
-        // Configurar sombras
-        model.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-          }
-        });
-
-        // Ajustar escala y rotación
-        // Ajusta estos valores según cómo venga tu modelo
-        model.scale.set(0.5, 0.5, 0.5);
-        model.rotation.y = 0; // Corregido: mirar hacia adelante
-
-        // Configurar animaciones
-        if (gltf.animations && gltf.animations.length > 0) {
-          console.log(`Encontradas ${gltf.animations.length} animaciones`);
-          this.mixer = new THREE.AnimationMixer(model);
-
-          // Reproducir la primera animación (normalmente "Fly" o "Idle")
-          const action = this.mixer.clipAction(gltf.animations[0]);
-          action.play();
+      // Configurar sombras
+      model.traverse((child: THREE.Object3D) => {
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
         }
+      });
 
-        // Reemplazar placeholder
-        pigeonGroup.remove(placeholder);
-        pigeonGroup.add(model);
-      },
-      undefined,
-      (error) => {
-        console.error("Error cargando el modelo animado:", error);
-        placeholderMaterial.opacity = 1;
-        placeholderMaterial.transparent = false;
+      model.scale.set(0.5, 0.5, 0.5);
+      model.rotation.y = 0;
+
+      if (gltf.animations && gltf.animations.length > 0) {
+        console.log(`Encontradas ${gltf.animations.length} animaciones`);
+        this.mixer = new THREE.AnimationMixer(model);
+        const action = this.mixer.clipAction(gltf.animations[0]);
+        action.play();
       }
-    );
+
+      pigeonGroup.add(model);
+    } else {
+      console.error("Pigeon asset not found in cache");
+      // Fallback placeholder
+      const placeholderGeometry = new THREE.SphereGeometry(0.5, 16, 16);
+      const placeholderMaterial = new THREE.MeshLambertMaterial({
+        color: 0x808080,
+        transparent: true,
+        opacity: 0.5,
+      });
+      const placeholder = new THREE.Mesh(
+        placeholderGeometry,
+        placeholderMaterial
+      );
+      pigeonGroup.add(placeholder);
+    }
 
     this.scene.add(pigeonGroup);
     return pigeonGroup;
@@ -835,8 +919,13 @@ export class MainScene {
    */
   private setupLighting(): void {
     // Luz hemisférica con colores cartoon contrastados
-    const hemisphereLight = new THREE.HemisphereLight(0x44aaff, 0x66dd66, 0.7);
+    // Aumentada la intensidad para que los modelos se vean mejor
+    const hemisphereLight = new THREE.HemisphereLight(0x44aaff, 0x66dd66, 1.0);
     this.scene.add(hemisphereLight);
+
+    // Luz ambiental extra para rellenar sombras oscuras
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    this.scene.add(ambientLight);
 
     // Luz direccional (sol)
     const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -869,14 +958,23 @@ export class MainScene {
       this.keys[e.code] = false;
     });
 
-    // Control de ratón para Pitch (Arriba/Abajo)
-    // Click para capturar el ratón
-    window.addEventListener("click", () => {
-      document.body.requestPointerLock();
+    // Detectar si el ratón está pulsado (Control principal)
+    window.addEventListener("mousedown", () => {
+      this.isMouseDown = true;
+      // Iniciar música con la primera interacción del usuario
+      this.audioManager.startMusic();
     });
 
+    window.addEventListener("mouseup", () => {
+      this.isMouseDown = false;
+    });
+
+    // Eliminado: requestPointerLock para evitar errores en iframes sandboxed
+    // El control ahora es exclusivamente "Drag to Fly" (Arrastrar para volar)
+
     window.addEventListener("mousemove", (e) => {
-      if (document.pointerLockElement === document.body) {
+      // Permitir control SOLO si se arrastra el ratón
+      if (this.isMouseDown) {
         // Sensibilidad ajustada para que sea suave
         const sensitivity = 0.002;
 
@@ -898,91 +996,134 @@ export class MainScene {
   }
 
   /**
-   * Actualiza la posición de la cámara para seguir a la paloma dinámicamente
+   * Configura los controles táctiles para móviles (Hold Left/Right)
    */
-  private updateCamera(): void {
-    // Calcular offset relativo a la rotación de la paloma (Yaw Y Pitch)
-    // Queremos que la cámara esté detrás (-Z) y arriba (+Y) RELATIVO a la paloma
-    // Si la paloma mira arriba, "atrás" es abajo.
+  private setupMobileControls(): void {
+    const canvas = this.renderer.domElement;
 
-    // Vector de offset local (ajusta estos valores para cambiar la distancia)
-    // Acercamos la cámara (Z: -12 -> -7, Y: 5 -> 3.5)
-    const relativeOffset = new THREE.Vector3(0, 3.5, -7);
+    // Touch Start: Detectar lado de la pantalla
+    canvas.addEventListener(
+      "touchstart",
+      (e) => {
+        e.preventDefault();
+        this.audioManager.startMusic(); // Iniciar música al tocar
 
-    // Aplicar la rotación de la paloma a este offset
-    const cameraOffset = relativeOffset.applyEuler(this.pigeon.rotation);
+        for (let i = 0; i < e.touches.length; i++) {
+          const touch = e.touches[i];
+          const halfWidth = window.innerWidth / 2;
 
-    // Posición objetivo de la cámara
-    const targetCameraPos = this.pigeon.position.clone().add(cameraOffset);
+          if (touch.clientX < halfWidth) {
+            this.isTurningLeft = true;
+            this.isTurningRight = false; // Prioridad al último toque o lógica exclusiva
+          } else {
+            this.isTurningRight = true;
+            this.isTurningLeft = false;
+          }
+        }
+      },
+      { passive: false }
+    );
 
-    // Suavizado de la cámara (Lerp)
-    // Un factor bajo (0.05-0.1) hace que la cámara tenga "peso" y tarde un poco en seguir
-    this.camera.position.lerp(targetCameraPos, 0.1);
+    // Touch End: Detener giro
+    const endTouch = (e: TouchEvent) => {
+      e.preventDefault();
+      // Si no hay toques, reseteamos todo.
+      // Si hay toques, podríamos recalcular, pero para simplificar:
+      if (e.touches.length === 0) {
+        this.isTurningLeft = false;
+        this.isTurningRight = false;
+      }
+    };
 
-    // Hacemos que la cámara mire un poco por delante de la paloma
-    // Esto ayuda a ver hacia dónde vamos
-    // Bajamos el punto de mira (Y: 0 -> -2) para que la paloma aparezca más arriba en la pantalla
-    const lookAtOffset = new THREE.Vector3(0, -2, 20); // 20 unidades adelante
-    lookAtOffset.applyEuler(this.pigeon.rotation);
-    const lookAtTarget = this.pigeon.position.clone().add(lookAtOffset);
+    canvas.addEventListener("touchend", endTouch);
+    canvas.addEventListener("touchcancel", endTouch);
+  }
 
-    this.camera.lookAt(lookAtTarget);
+  // Variables reutilizables para la cámara (evitar crear objetos cada frame)
+  private cameraTargetPos: THREE.Vector3 = new THREE.Vector3();
+  private cameraLookAtTarget: THREE.Vector3 = new THREE.Vector3();
+  private cameraOffset: THREE.Vector3 = new THREE.Vector3();
+
+  /**
+   * Actualiza la posición de la cámara para seguir a la paloma (Optimizado)
+   */
+  private updateCamera(snap: boolean = false): void {
+    // Cámara fija detrás de la paloma - Sin lerp para evitar vibraciones
+    const angle = this.pigeon.rotation.y;
+
+    // Calcular offset usando trigonometría directa (más eficiente)
+    // La cámara debe estar DETRÁS de la paloma (en -Z relativo a su rotación)
+    const distance = 8; // Más cerca
+    const height = 4; // Más bajo para ver mejor la paloma
+
+    // Sin(angle) y Cos(angle) para posición DETRÁS de la paloma
+    // Cuando angle=0, paloma mira a +Z, cámara debe estar en -Z (detrás)
+    this.cameraOffset.set(
+      -Math.sin(angle) * distance, // Invertido para estar detrás
+      height,
+      -Math.cos(angle) * distance // Negativo para estar detrás
+    );
+
+    // Posición de la cámara = posición paloma + offset
+    this.cameraTargetPos.copy(this.pigeon.position).add(this.cameraOffset);
+
+    // Aplicar posición directamente (sin lerp = sin vibración)
+    this.camera.position.copy(this.cameraTargetPos);
+
+    // Mirar directamente a la paloma (sin offset complicado)
+    this.cameraLookAtTarget.copy(this.pigeon.position);
+    this.cameraLookAtTarget.y += 1; // Ligeramente arriba del centro
+
+    this.camera.lookAt(this.cameraLookAtTarget);
   }
 
   /**
-   * Procesa los controles de movimiento con físicas suavizadas
+   * Procesa los controles de movimiento con físicas simplificadas (Arcade)
    */
   private handleMovement(delta: number): void {
-    // 1. Rotación (Yaw) - RATÓN + TECLADO
+    const FIXED_HEIGHT = 20;
 
-    // Ratón: Giro directo (FPS style)
-    const mouseTurn = this.targetMousePosition.x;
-    this.pigeonDirection += mouseTurn;
-    this.targetMousePosition.x = 0; // Resetear delta tras aplicarlo
+    // 1. Rotación (Yaw) - RATÓN + TECLADO + MÓVIL
+    let turnSpeed = 0;
 
-    // Teclado: Giro con velocidad constante
-    let keyboardTurn = 0;
+    // Ratón: Giro directo
+    turnSpeed += this.targetMousePosition.x * 2.0; // Factor de velocidad
+    this.targetMousePosition.x = 0; // Reset
+
+    // Teclado
     if (this.keys["KeyA"] || this.keys["ArrowLeft"]) {
-      keyboardTurn = this.pigeonRotationSpeed * delta;
+      turnSpeed += this.pigeonRotationSpeed * delta;
     } else if (this.keys["KeyD"] || this.keys["ArrowRight"]) {
-      keyboardTurn = -this.pigeonRotationSpeed * delta;
+      turnSpeed -= this.pigeonRotationSpeed * delta;
     }
-    this.pigeonDirection += keyboardTurn;
 
-    // Aplicar dirección final
+    // Móvil (Hold Left/Right) - Giro progresivo
+    let targetTurnSpeed = 0;
+    if (this.isTurningLeft) {
+      targetTurnSpeed = this.pigeonRotationSpeed * delta * 1.2;
+    } else if (this.isTurningRight) {
+      targetTurnSpeed = -this.pigeonRotationSpeed * delta * 1.2;
+    }
+
+    // Suavizar el giro en móvil (aceleración/deceleración progresiva)
+    this.currentTurnSpeed = THREE.MathUtils.lerp(
+      this.currentTurnSpeed,
+      targetTurnSpeed,
+      delta * 8 // Velocidad de transición
+    );
+    turnSpeed += this.currentTurnSpeed;
+
+    this.pigeonDirection += turnSpeed;
     this.pigeon.rotation.y = this.pigeonDirection;
 
-    // Efecto visual de Roll (Balanceo)
-    // Calculamos la velocidad de giro total para inclinar la paloma
-    // Evitamos división por cero si delta es muy pequeño
-    const safeDelta = Math.max(delta, 0.001);
-    const totalTurnSpeed = mouseTurn / safeDelta + keyboardTurn / safeDelta;
+    // Efecto visual de Roll (Balanceo) al girar - Simplificado
+    this.pigeon.rotation.z = THREE.MathUtils.clamp(turnSpeed * 5.0, -0.3, 0.3);
 
-    // Suavizamos el roll objetivo (Banking)
-    // Multiplicamos por 0.1 para que no sea exagerado
-    const targetRoll = THREE.MathUtils.clamp(totalTurnSpeed * 0.1, -0.6, 0.6);
-    this.pigeon.rotation.z = THREE.MathUtils.lerp(
-      this.pigeon.rotation.z,
-      targetRoll,
-      delta * 5
-    );
+    // Pitch siempre a 0 (horizontal)
+    this.pigeon.rotation.x = 0;
 
-    // 2. Inclinación (Pitch) - RATÓN
-    // Usamos la posición acumulada del ratón como objetivo de inclinación
-    const targetPitch = this.targetMousePosition.y;
-
-    // Suavizar la transición de inclinación
-    // Un lerp rápido para que responda bien al ratón pero filtre temblores
-    this.pigeon.rotation.x = THREE.MathUtils.lerp(
-      this.pigeon.rotation.x,
-      targetPitch,
-      delta * 10
-    );
-
-    // 3. Movimiento (WASD)
-    let isMoving = false;
-
-    // Suavizado de velocidad (Aceleración/Deceleración del Turbo)
+    // 2. Movimiento Constante
+    // Suavizado de velocidad (Turbo)
     const targetSpeed = this.isSpeedBoostActive
       ? this.boostSpeed
       : this.baseSpeed;
@@ -994,25 +1135,17 @@ export class MainScene {
 
     const moveSpeed = this.pigeonSpeed * delta;
 
-    if (this.keys["KeyW"] || this.keys["ArrowUp"]) {
-      // Vector hacia adelante (Z+)
-      const forward = new THREE.Vector3(0, 0, 1);
-      forward.applyEuler(this.pigeon.rotation);
+    // Siempre avanzar hacia adelante
+    const forward = new THREE.Vector3(0, 0, 1);
+    forward.applyEuler(this.pigeon.rotation);
+    this.pigeon.position.add(forward.multiplyScalar(moveSpeed));
 
-      this.pigeon.position.add(forward.multiplyScalar(moveSpeed));
-      isMoving = true;
-    } else if (this.keys["KeyS"] || this.keys["ArrowDown"]) {
-      // Ir hacia atrás / frenar
-      const backward = new THREE.Vector3(0, 0, 1);
-      backward.applyEuler(this.pigeon.rotation);
-      this.pigeon.position.sub(backward.multiplyScalar(moveSpeed * 0.5));
-      isMoving = true;
-    }
+    // 3. Altura Fija (Sin Lerp para evitar vibraciones)
+    this.pigeon.position.y = FIXED_HEIGHT;
 
-    // Actualizar animaciones del modelo si existen
+    // Actualizar animaciones del modelo
     if (this.mixer) {
       this.mixer.update(delta);
-      // Velocidad constante salvo con turbo
       const animSpeed = this.isSpeedBoostActive ? 2.5 : 1.0;
       this.mixer.timeScale = animSpeed;
     }
@@ -1061,22 +1194,19 @@ export class MainScene {
       }
     }
 
-    // Animar Power-ups (Eliminado)
-    // this.powerUps.forEach((pu) => { ... });
-
     // Rotar los Power-ups
     this.powerUps.forEach((pu) => {
       if (pu.userData.rotationSpeed) {
         pu.rotation.y += 2.0 * delta; // Rotación simple para aros
       }
-      // Flotar
+      // Flotar (Muy sutil alrededor de la altura fija)
       if (pu.userData.initialY) {
         pu.position.y =
           pu.userData.initialY +
           Math.sin(
             this.clock.getElapsedTime() * 1.5 + pu.userData.floatOffset
           ) *
-            1.5;
+            0.5; // Reducido amplitud
       }
     });
 
@@ -1094,25 +1224,22 @@ export class MainScene {
             this.clock.getElapsedTime() * donut.userData.floatSpeed +
               donut.userData.floatOffset
           ) *
-            1.5;
+            0.5; // Reducido amplitud
       }
     });
 
     // Comprobar colisiones
     this.checkCollisions();
 
-    // Comprobar colisiones con Power-ups (Eliminado)
-    // this.checkPowerUpCollisions();    // Gestionar Turbo
+    // Gestionar Turbo
     if (this.isSpeedBoostActive) {
       this.speedBoostTimer -= delta;
       if (this.speedBoostTimer <= 0) {
         this.isSpeedBoostActive = false;
-        // No reseteamos pigeonSpeed aquí para permitir que el lerp lo haga suavemente
       }
 
       // Generar estela de velocidad
       if (Math.random() < 0.5) {
-        // No en cada frame
         const trailGeo = new THREE.BoxGeometry(0.2, 0.2, 8);
         const trailMat = new THREE.MeshBasicMaterial({
           color: 0x00ffff,
@@ -1121,7 +1248,6 @@ export class MainScene {
         });
         const trail = new THREE.Mesh(trailGeo, trailMat);
 
-        // Posición aleatoria alrededor de la paloma
         const offset = new THREE.Vector3(
           (Math.random() - 0.5) * 6,
           (Math.random() - 0.5) * 6,
@@ -1139,7 +1265,6 @@ export class MainScene {
     // Actualizar partículas de estela
     for (let i = this.trailParticles.length - 1; i >= 0; i--) {
       const p = this.trailParticles[i];
-      // Mover hacia atrás relativo a su rotación para simular viento
       const backward = new THREE.Vector3(0, 0, 1)
         .applyEuler(p.rotation)
         .multiplyScalar(delta * 5);
@@ -1157,7 +1282,6 @@ export class MainScene {
     }
 
     // Efecto FOV dinámico
-    // Ajustado: Zoom mucho más suave (85 en lugar de 90)
     const targetFOV = this.isSpeedBoostActive ? 85 : 75;
     this.camera.fov = THREE.MathUtils.lerp(
       this.camera.fov,
@@ -1166,12 +1290,7 @@ export class MainScene {
     );
     this.camera.updateProjectionMatrix();
 
-    // Limitar altura mínima (suelo aproximado)
-    if (this.pigeon.position.y < 2) {
-      this.pigeon.position.y = 2;
-    }
-
-    // Limitar movimiento dentro de los bordes del mapa (Paredes invisibles)
+    // Limitar movimiento dentro de los bordes del mapa
     if (this.pigeon.position.x < this.mapBounds.minX)
       this.pigeon.position.x = this.mapBounds.minX;
     if (this.pigeon.position.x > this.mapBounds.maxX)
@@ -1180,6 +1299,96 @@ export class MainScene {
       this.pigeon.position.z = this.mapBounds.minZ;
     if (this.pigeon.position.z > this.mapBounds.maxZ)
       this.pigeon.position.z = this.mapBounds.maxZ;
+  }
+
+  /**
+   * Actualiza la lógica de los Flamingos
+   */
+  private updateFlamingos(delta: number): void {
+    // Actualizar animaciones
+    this.flamingoMixers.forEach((mixer) => mixer.update(delta));
+
+    this.flamingos.forEach((flamingo) => {
+      // 1. Buscar objetivo si no tiene o si ya no existe
+      if (flamingo.targetIndex === null || !this.donuts[flamingo.targetIndex]) {
+        flamingo.targetIndex = this.findNearestDonut(flamingo.mesh.position);
+      }
+
+      // Si no hay donuts, volar en círculos o aleatoriamente
+      if (flamingo.targetIndex === null) {
+        flamingo.mesh.rotation.y += delta * 0.5;
+        flamingo.mesh.translateZ(flamingo.speed * delta);
+        return;
+      }
+
+      // 2. Moverse hacia el objetivo
+      const targetDonut = this.donuts[flamingo.targetIndex];
+
+      // Mirar suavemente hacia el objetivo
+      const targetPos = targetDonut.position.clone();
+      const direction = targetPos.sub(flamingo.mesh.position).normalize();
+
+      // Calcular rotación objetivo (LookAt manual suave)
+      const dummy = new THREE.Object3D();
+      dummy.position.copy(flamingo.mesh.position);
+      dummy.lookAt(targetDonut.position);
+
+      flamingo.mesh.quaternion.slerp(dummy.quaternion, delta * 2.0);
+
+      // Avanzar
+      flamingo.mesh.translateZ(flamingo.speed * delta);
+
+      // 3. Comprobar si se come el donut
+      if (flamingo.mesh.position.distanceTo(targetDonut.position) < 5) {
+        this.flamingoEatsDonut(flamingo.targetIndex);
+        flamingo.targetIndex = null; // Buscar nuevo objetivo
+      }
+    });
+  }
+
+  /**
+   * Encuentra el índice del donut más cercano a una posición
+   */
+  private findNearestDonut(position: THREE.Vector3): number | null {
+    if (this.donuts.length === 0) return null;
+
+    let nearestIndex = -1;
+    let minDistance = Infinity;
+
+    for (let i = 0; i < this.donuts.length; i++) {
+      const dist = position.distanceTo(this.donuts[i].position);
+      if (dist < minDistance) {
+        minDistance = dist;
+        nearestIndex = i;
+      }
+    }
+
+    return nearestIndex;
+  }
+
+  /**
+   * Un flamingo se come un donut
+   */
+  private flamingoEatsDonut(index: number): void {
+    if (!this.donuts[index]) return;
+
+    const eatenDonut = this.donuts[index];
+
+    // Efecto visual diferente (ej. partículas rojas o simplemente desaparecer)
+    // Reutilizamos la explosión pero podríamos cambiar el color si quisiéramos
+    this.createDonutExplosion(eatenDonut.position);
+
+    // Eliminar donut
+    this.scene.remove(eatenDonut);
+    this.donuts.splice(index, 1);
+
+    // IMPORTANTE: Actualizar índices de los otros flamingos si apuntaban a índices superiores
+    // Esto es complejo, así que simplemente reseteamos los objetivos de todos los flamingos
+    // para que recalculen en el siguiente frame. Es menos eficiente pero más seguro.
+    this.flamingos.forEach((f) => (f.targetIndex = null));
+
+    // Reponer Donut en otro sitio (para mantener el juego infinito)
+    this.spawnRandomDonut();
   }
 
   /**
@@ -1233,6 +1442,9 @@ export class MainScene {
     // Actualizar hambre
     this.updateHunger(delta);
 
+    // Actualizar Flamingos
+    this.updateFlamingos(delta);
+
     // Procesar movimiento pasando delta
     this.handleMovement(delta);
 
@@ -1263,6 +1475,7 @@ export class MainScene {
     // Limpiar event listeners
     window.removeEventListener("keydown", () => {});
     window.removeEventListener("keyup", () => {});
+    window.removeEventListener("resize", this.handleResize);
 
     // Limpiar geometrías y materiales
     this.scene.traverse((object) => {
@@ -1274,7 +1487,7 @@ export class MainScene {
       }
     });
 
-    // Limpiar renderer
+    // Dispose renderer
     this.renderer.dispose();
   }
 }
