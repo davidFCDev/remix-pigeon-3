@@ -311,17 +311,16 @@ export class MainScene {
    * Inicializa las Nubes (Zonas que ralentizan)
    */
   private initClouds(): void {
-    // Geometría compartida para todas las esferas de nubes
+    // Geometría compartida optimizada
     this.cloudGeometry = new THREE.SphereGeometry(1, 8, 6);
 
-    // Generar 6 nubes grandes distribuidas por el mapa
+    // Generar 5 nubes distribuidas por el mapa
     const cloudPositions = [
-      { x: -200, z: -150 },
-      { x: 180, z: -200 },
-      { x: -150, z: 180 },
-      { x: 200, z: 150 },
-      { x: 0, z: -250 },
-      { x: -50, z: 100 },
+      { x: -180, z: -130 },
+      { x: 160, z: -180 },
+      { x: -130, z: 160 },
+      { x: 180, z: 130 },
+      { x: 0, z: -220 },
     ];
 
     for (const pos of cloudPositions) {
@@ -330,46 +329,60 @@ export class MainScene {
   }
 
   /**
-   * Crea una nube grande compuesta de varias esferas
+   * Crea una nube estilizada con forma natural
    */
   private createCloud(x: number, z: number): void {
     const cloudGroup = new THREE.Group();
 
-    // Altura entre 15 y 30 (donde vuela la paloma)
-    const baseY = 18 + Math.random() * 10;
+    // Altura a nivel de la paloma
+    const baseY = 20;
     cloudGroup.position.set(x, baseY, z);
 
-    // Material semi-transparente blanco
+    // Material suave
     const cloudMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
       opacity: 0.4,
     });
 
-    // Crear varias esferas para formar la nube (8-12 esferas)
-    const sphereCount = 8 + Math.floor(Math.random() * 5);
-    for (let i = 0; i < sphereCount; i++) {
-      const sphere = new THREE.Mesh(this.cloudGeometry, cloudMaterial.clone());
+    // Estructura de nube natural: base grande + cúpulas arriba
+    // Base principal (elipse grande)
+    const base = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
+    base.scale.set(30, 8, 25);
+    base.position.set(0, 0, 0);
+    cloudGroup.add(base);
 
-      // Tamaño variable para cada esfera
-      const scale = 15 + Math.random() * 20;
-      sphere.scale.set(scale, scale * 0.6, scale); // Achatadas
+    // Cúpulas superiores para dar forma de nube
+    const domePositions = [
+      { x: -10, y: 4, z: 0, sx: 15, sy: 10, sz: 14 },
+      { x: 8, y: 5, z: 5, sx: 18, sy: 12, sz: 16 },
+      { x: 5, y: 3, z: -8, sx: 14, sy: 9, sz: 12 },
+      { x: -5, y: 6, z: 6, sx: 12, sy: 10, sz: 11 },
+    ];
 
-      // Posición aleatoria dentro del grupo
-      sphere.position.set(
-        (Math.random() - 0.5) * 50,
-        (Math.random() - 0.5) * 8,
-        (Math.random() - 0.5) * 50
-      );
-
+    for (const dome of domePositions) {
+      const sphere = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
+      sphere.scale.set(dome.sx, dome.sy, dome.sz);
+      sphere.position.set(dome.x, dome.y, dome.z);
       cloudGroup.add(sphere);
     }
 
-    // Radio de colisión (zona de efecto)
+    // Bordes suaves a los lados
+    const side1 = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
+    side1.scale.set(12, 6, 10);
+    side1.position.set(-18, -1, 3);
+    cloudGroup.add(side1);
+
+    const side2 = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
+    side2.scale.set(10, 5, 12);
+    side2.position.set(16, -1, -4);
+    cloudGroup.add(side2);
+
+    // Radio de colisión
     cloudGroup.userData = {
-      radius: 45, // Radio de la zona de ralentización
+      radius: 35,
       floatOffset: Math.random() * Math.PI * 2,
-      floatSpeed: 0.3 + Math.random() * 0.2,
+      floatSpeed: 0.2,
       initialY: baseY,
     };
 
