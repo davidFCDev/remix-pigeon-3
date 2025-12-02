@@ -72,6 +72,21 @@ export class MainScene {
   private boostSpeed: number = 80.0; // Ultravelocidad
   private trailParticles: THREE.Mesh[] = [];
 
+  // Sistema de textos flotantes (feedback visual)
+  private floatingTexts: THREE.Sprite[] = [];
+  private boostPhrases: string[] = [
+    "EXCELLENT!",
+    "AMAZING!",
+    "SUPER!",
+    "AWESOME!",
+    "FANTASTIC!",
+    "WOW!",
+    "INCREDIBLE!",
+    "x2 BONUS!",
+    "TURBO!",
+    "ON FIRE!"
+  ];
+
   // Animación
   private mixer: THREE.AnimationMixer | null = null;
   private clock: THREE.Clock = new THREE.Clock();
@@ -124,7 +139,7 @@ export class MainScene {
 
   // Optimización: Detectar móvil una sola vez
   private isMobile: boolean = false;
-  
+
   // Optimización: Objetos reutilizables para evitar garbage collection
   private tempVector: THREE.Vector3 = new THREE.Vector3();
   private tempVector2: THREE.Vector3 = new THREE.Vector3();
@@ -155,10 +170,11 @@ export class MainScene {
     this.camera = new THREE.PerspectiveCamera(75, aspectRatio, 0.1, 4000);
 
     // Crear renderer - Optimizado para móviles
-    this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-      navigator.userAgent
-    );
-    
+    this.isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      );
+
     this.renderer = new THREE.WebGLRenderer({
       antialias: !this.isMobile, // Desactivar antialiasing en móviles
       powerPreference: "high-performance",
@@ -171,7 +187,7 @@ export class MainScene {
     ); // Reducir resolución en móviles
     this.renderer.shadowMap.enabled = !this.isMobile; // Desactivar sombras en móviles
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    
+
     // Optimización: Desactivar auto-clear si manejamos manualmente
     // this.renderer.autoClear = true;
 
@@ -421,7 +437,11 @@ export class MainScene {
     goldenDonut.position.copy(position);
 
     // Orientación aleatoria inicial (igual que donut normal)
-    goldenDonut.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+    goldenDonut.rotation.set(
+      Math.random() * Math.PI,
+      Math.random() * Math.PI,
+      0
+    );
 
     // Animación flotante (userData) - Exactamente igual que donut normal
     goldenDonut.userData = {
@@ -469,10 +489,18 @@ export class MainScene {
     this.scene.remove(collectedDonut);
     this.goldenDonuts.splice(index, 1);
 
-    // Incrementar puntuación (+5 puntos)
-    this.score += 5;
+    // Incrementar puntuación (+5 puntos, x2 si hay boost = +10)
+    const points = this.isSpeedBoostActive ? 10 : 5;
+    this.score += points;
     if (this.scoreElement) {
       this.scoreElement.innerText = this.score.toString();
+    }
+
+    // Mostrar texto flotante (siempre para dorado, especial si hay boost)
+    if (this.isSpeedBoostActive) {
+      this.createFloatingText(collectedDonut.position, "GOLDEN x2!", 0xffd700);
+    } else {
+      this.createFloatingText(collectedDonut.position, "+5 GOLDEN!", 0xffd700);
     }
 
     // Restaurar MUCHA hambre
@@ -696,10 +724,17 @@ export class MainScene {
     this.scene.remove(collectedDonut);
     this.donuts.splice(index, 1);
 
-    // Incrementar puntuación
-    this.score++;
+    // Incrementar puntuación (x2 si hay boost activo)
+    const points = this.isSpeedBoostActive ? 2 : 1;
+    this.score += points;
     if (this.scoreElement) {
       this.scoreElement.innerText = this.score.toString();
+    }
+
+    // Mostrar texto flotante si hay boost activo
+    if (this.isSpeedBoostActive) {
+      const phrase = this.boostPhrases[Math.floor(Math.random() * this.boostPhrases.length)];
+      this.createFloatingText(collectedDonut.position, phrase, 0x00ffff);
     }
 
     // Restaurar hambre (Comer)
@@ -776,6 +811,58 @@ export class MainScene {
 
     this.scene.add(effect);
     this.ringEffects.push(effect);
+  }
+
+  /**
+   * Crea un texto flotante que sube y se desvanece
+   */
+  private createFloatingText(position: THREE.Vector3, text: string, color: number): void {
+    // Crear canvas para el texto
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    canvas.width = 256;
+    canvas.height = 64;
+
+    // Configurar texto
+    ctx.fillStyle = "transparent";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Sombra para mejor legibilidad
+    ctx.shadowColor = "black";
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetX = 2;
+    ctx.shadowOffsetY = 2;
+    
+    // Texto principal
+    ctx.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
+    ctx.font = "bold 36px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+    // Crear textura y sprite
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMaterial = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    
+    // Posicionar encima del punto de recolección
+    sprite.position.copy(position);
+    sprite.position.y += 3;
+    sprite.scale.set(8, 2, 1);
+
+    // Datos para animación
+    sprite.userData = {
+      velocity: 5, // Velocidad de subida
+      life: 1.5, // Duración en segundos
+      initialY: sprite.position.y,
+    };
+
+    this.scene.add(sprite);
+    this.floatingTexts.push(sprite);
   }
 
   // Eliminado: spawnPowerUp
@@ -1371,7 +1458,8 @@ export class MainScene {
       if (pu.userData.initialY) {
         pu.position.y =
           pu.userData.initialY +
-          Math.sin(this.cachedElapsedTime * 1.5 + pu.userData.floatOffset) * 0.5;
+          Math.sin(this.cachedElapsedTime * 1.5 + pu.userData.floatOffset) *
+            0.5;
       }
     }
 
@@ -1386,7 +1474,11 @@ export class MainScene {
       if (donut.userData.initialY) {
         donut.position.y =
           donut.userData.initialY +
-          Math.sin(this.cachedElapsedTime * donut.userData.floatSpeed + donut.userData.floatOffset) * 0.5;
+          Math.sin(
+            this.cachedElapsedTime * donut.userData.floatSpeed +
+              donut.userData.floatOffset
+          ) *
+            0.5;
       }
     }
 
@@ -1401,7 +1493,11 @@ export class MainScene {
       if (goldenDonut.userData.initialY) {
         goldenDonut.position.y =
           goldenDonut.userData.initialY +
-          Math.sin(this.cachedElapsedTime * goldenDonut.userData.floatSpeed + goldenDonut.userData.floatOffset) * 0.5;
+          Math.sin(
+            this.cachedElapsedTime * goldenDonut.userData.floatSpeed +
+              goldenDonut.userData.floatOffset
+          ) *
+            0.5;
       }
     }
 
@@ -1446,7 +1542,10 @@ export class MainScene {
     // Actualizar partículas de estela - Optimizado
     for (let i = this.trailParticles.length - 1; i >= 0; i--) {
       const p = this.trailParticles[i];
-      this.tempVector2.set(0, 0, 1).applyEuler(p.rotation).multiplyScalar(delta * 5);
+      this.tempVector2
+        .set(0, 0, 1)
+        .applyEuler(p.rotation)
+        .multiplyScalar(delta * 5);
       p.position.sub(this.tempVector2);
 
       if (p.material instanceof THREE.Material) {
@@ -1457,6 +1556,32 @@ export class MainScene {
           p.material.dispose();
           this.trailParticles.splice(i, 1);
         }
+      }
+    }
+
+    // Actualizar textos flotantes
+    for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
+      const text = this.floatingTexts[i];
+      
+      // Subir el texto
+      text.position.y += text.userData.velocity * delta;
+      
+      // Reducir vida
+      text.userData.life -= delta;
+      
+      // Desvanecer
+      if (text.material instanceof THREE.SpriteMaterial) {
+        text.material.opacity = Math.max(0, text.userData.life / 1.5);
+      }
+      
+      // Eliminar si terminó
+      if (text.userData.life <= 0) {
+        this.scene.remove(text);
+        if (text.material instanceof THREE.SpriteMaterial) {
+          text.material.map?.dispose();
+          text.material.dispose();
+        }
+        this.floatingTexts.splice(i, 1);
       }
     }
 
@@ -1504,7 +1629,10 @@ export class MainScene {
       const targetDonut = this.donuts[flamingo.targetIndex];
 
       // Mirar suavemente hacia el objetivo (reutilizando objetos)
-      this.tempVector.copy(targetDonut.position).sub(flamingo.mesh.position).normalize();
+      this.tempVector
+        .copy(targetDonut.position)
+        .sub(flamingo.mesh.position)
+        .normalize();
 
       // Calcular rotación objetivo (LookAt manual suave) - Reutilizando dummy
       this.dummyObject.position.copy(flamingo.mesh.position);
@@ -1615,7 +1743,7 @@ export class MainScene {
 
     // Calcular delta time (tiempo transcurrido desde el último frame en segundos)
     const delta = this.clock.getDelta();
-    
+
     // Cache del tiempo transcurrido (evita múltiples llamadas)
     this.cachedElapsedTime = this.clock.getElapsedTime();
 
