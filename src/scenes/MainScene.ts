@@ -583,10 +583,10 @@ export class MainScene {
   }
 
   /**
-   * Crea un nuevo Power-up (Aro con líneas de viento) en la posición dada
+   * Crea un nuevo Power-up (Aro doble elegante) en la posición dada
    */
   private spawnPowerUp(position: THREE.Vector3): void {
-    // Grupo contenedor para el aro con viento
+    // Grupo contenedor para el aro doble
     const powerUpGroup = new THREE.Group() as THREE.Group & THREE.Mesh;
     powerUpGroup.position.copy(position);
 
@@ -594,33 +594,31 @@ export class MainScene {
     const mainRing = new THREE.Mesh(this.powerUpGeometry, this.powerUpMaterial);
     powerUpGroup.add(mainRing);
 
-    // Líneas de viento pasando por el centro del aro
-    const windLines: THREE.Line[] = [];
-    for (let i = 0; i < 5; i++) {
-      const points = [];
-      const yOffset = (i - 2) * 0.8; // Distribuir verticalmente
-      const curve = (Math.random() - 0.5) * 0.5;
-      
-      // Crear línea ondulada que atraviesa el aro
-      for (let j = 0; j <= 8; j++) {
-        const t = j / 8;
-        const x = (t - 0.5) * 12; // De -6 a 6
-        const y = yOffset + Math.sin(t * Math.PI * 2) * curve;
-        const z = Math.sin(t * Math.PI) * 0.3;
-        points.push(new THREE.Vector3(x, y, z));
-      }
-      
-      const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
-      const lineMaterial = new THREE.LineBasicMaterial({
+    // Aro interior (más pequeño, rotado)
+    const innerGeom = new THREE.TorusGeometry(2.8, 0.1, 16, 48);
+    const innerMat = new THREE.MeshBasicMaterial({
+      color: 0xaaddff,
+      transparent: true,
+      opacity: 0.7,
+    });
+    const innerRing = new THREE.Mesh(innerGeom, innerMat);
+    innerRing.rotation.x = Math.PI / 6; // Ligeramente inclinado
+    powerUpGroup.add(innerRing);
+
+    // Pequeñas partículas flotando alrededor
+    for (let i = 0; i < 6; i++) {
+      const particleGeom = new THREE.SphereGeometry(0.15, 8, 8);
+      const particleMat = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
-        opacity: 0.4 + Math.random() * 0.2,
+        opacity: 0.6,
       });
-      const line = new THREE.Line(lineGeometry, lineMaterial);
-      line.userData.speed = 8 + Math.random() * 4; // Velocidad de movimiento
-      line.userData.offset = Math.random() * 20; // Offset inicial
-      windLines.push(line);
-      powerUpGroup.add(line);
+      const particle = new THREE.Mesh(particleGeom, particleMat);
+      const angle = (i / 6) * Math.PI * 2;
+      particle.position.set(Math.cos(angle) * 5, 0, Math.sin(angle) * 5);
+      particle.userData.orbitAngle = angle;
+      particle.userData.orbitSpeed = 1 + Math.random() * 0.5;
+      powerUpGroup.add(particle);
     }
 
     // Apuntar siempre al centro del mapa
@@ -631,8 +629,7 @@ export class MainScene {
       initialY: position.y,
       floatSpeed: 1.0 + Math.random(),
       floatOffset: Math.random() * Math.PI * 2,
-      rotationSpeed: 0.5, // Rotación suave
-      windLines: windLines, // Referencia a las líneas de viento
+      rotationSpeed: 0.5,
     };
 
     this.scene.add(powerUpGroup);
@@ -727,13 +724,7 @@ export class MainScene {
     // Reproducir sonido
     this.audioManager.playPowerUpSound();
 
-    // Efecto visual
-    this.createRingExplosion(
-      collectedPowerUp.position,
-      collectedPowerUp.rotation
-    );
-
-    // Eliminar
+    // Eliminar (sin efecto visual, el efecto es la estela de viento)
     this.scene.remove(collectedPowerUp);
     this.powerUps.splice(index, 1);
 
@@ -820,61 +811,33 @@ export class MainScene {
   }
 
   /**
-   * Crea un efecto visual de desvanecimiento suave al recoger un aro
+   * Crea un efecto visual de líneas de viento al recoger un aro
    */
   private createRingExplosion(
     position: THREE.Vector3,
     rotation: THREE.Euler
   ): void {
-    // Crear partículas que se dispersan suavemente (sin anillo amarillo)
-    const particleCount = 8;
-    for (let i = 0; i < particleCount; i++) {
-      const angle = (i / particleCount) * Math.PI * 2;
-      const particleGeom = new THREE.SphereGeometry(0.3, 8, 8);
-      const particleMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.7,
-      });
-      
-      const particle = new THREE.Mesh(particleGeom, particleMat);
-      particle.position.copy(position);
-      particle.position.x += Math.cos(angle) * 4;
-      particle.position.z += Math.sin(angle) * 4;
-      
-      particle.userData = {
-        velocityX: Math.cos(angle) * 15,
-        velocityY: 5 + Math.random() * 5,
-        velocityZ: Math.sin(angle) * 15,
-        fadeSpeed: 2.5,
-        life: 1.0,
-      };
-      
-      this.scene.add(particle);
-      this.ringEffects.push(particle);
-    }
-    
-    // Añadir ráfaga de viento central
-    for (let i = 0; i < 3; i++) {
+    // Líneas de viento que se expanden desde el centro
+    for (let i = 0; i < 8; i++) {
+      const yOffset = (i - 3.5) * 0.4;
       const linePoints = [
-        new THREE.Vector3(-8, (i - 1) * 0.5, 0),
-        new THREE.Vector3(8, (i - 1) * 0.5, 0),
+        new THREE.Vector3(-6, yOffset, 0),
+        new THREE.Vector3(6, yOffset, 0),
       ];
       const lineGeom = new THREE.BufferGeometry().setFromPoints(linePoints);
       const lineMat = new THREE.LineBasicMaterial({
         color: 0xffffff,
         transparent: true,
-        opacity: 0.6,
+        opacity: 0.5 + Math.random() * 0.3,
       });
       const windLine = new THREE.Line(lineGeom, lineMat);
       windLine.position.copy(position);
       windLine.rotation.copy(rotation);
       
       windLine.userData = {
-        velocityX: 20,
-        fadeSpeed: 3.0,
+        velocityX: 25 + Math.random() * 10,
+        fadeSpeed: 2.0 + Math.random(),
         life: 1.0,
-        isLine: true,
       };
       
       this.scene.add(windLine);
@@ -1521,19 +1484,6 @@ export class MainScene {
           Math.sin(this.cachedElapsedTime * 1.5 + pu.userData.floatOffset) *
             0.5;
       }
-      
-      // Animar líneas de viento (mover horizontalmente y hacer loop)
-      if (pu.userData.windLines) {
-        const lines = pu.userData.windLines as THREE.Line[];
-        for (let j = 0; j < lines.length; j++) {
-          const line = lines[j];
-          const speed = line.userData.speed || 8;
-          const offset = line.userData.offset || 0;
-          // Mover la línea y hacer loop cuando salga del aro
-          const xPos = ((this.cachedElapsedTime * speed + offset) % 16) - 8;
-          line.position.x = xPos;
-        }
-      }
     }
 
     // Rotar los Donuts - Usando for loop (más eficiente que forEach)
@@ -1584,66 +1534,50 @@ export class MainScene {
         this.isSpeedBoostActive = false;
       }
 
-      // Generar estela de partículas suaves - Reducida frecuencia en móviles
-      const trailChance = this.isMobile ? 0.3 : 0.6;
-      if (Math.random() < trailChance && this.trailParticles.length < 30) {
-        // Geometría esférica suave
+      // Generar estela de velocidad - Líneas azules hacia atrás (túnel de viento)
+      const trailChance = this.isMobile ? 0.2 : 0.4;
+      if (Math.random() < trailChance && this.trailParticles.length < 20) {
+        // Reutilizar geometría compartida - Caja alargada en Z
         if (!this.trailGeometry) {
-          this.trailGeometry = new THREE.SphereGeometry(
-            0.3,
-            8,
-            8
-          ) as unknown as THREE.BoxGeometry;
+          this.trailGeometry = new THREE.BoxGeometry(0.15, 0.15, 6 + Math.random() * 4);
         }
-
-        // Color suave blanco/celeste
-        const colors = [0xffffff, 0xe0f0ff, 0xd0e8ff];
-        const color = colors[Math.floor(Math.random() * colors.length)];
-
+        
         const trailMat = new THREE.MeshBasicMaterial({
-          color: color,
+          color: 0x66ccff, // Azul claro
           transparent: true,
-          opacity: 0.4 + Math.random() * 0.2,
+          opacity: 0.5 + Math.random() * 0.3,
         });
         const trail = new THREE.Mesh(this.trailGeometry, trailMat);
 
-        // Posición más dispersa y orgánica
+        // Posición detrás de la paloma con dispersión
         this.tempVector.set(
-          (Math.random() - 0.5) * 4,
           (Math.random() - 0.5) * 3,
-          -1 - Math.random() * 2
+          (Math.random() - 0.5) * 2,
+          -2
         );
         this.tempVector.applyEuler(this.pigeon.rotation);
         trail.position.copy(this.pigeon.position).add(this.tempVector);
-
-        // Tamaño variable
-        const scale = 0.5 + Math.random() * 0.8;
-        trail.scale.set(scale, scale, scale);
-
-        // Velocidad de desvanecimiento variable
-        trail.userData.fadeSpeed = 1.5 + Math.random();
+        trail.rotation.copy(this.pigeon.rotation);
 
         this.scene.add(trail);
         this.trailParticles.push(trail);
       }
     }
 
-    // Actualizar partículas de estela - Efecto suave flotante
+    // Actualizar partículas de estela - Efecto túnel de viento
     for (let i = this.trailParticles.length - 1; i >= 0; i--) {
       const p = this.trailParticles[i];
 
-      // Movimiento suave hacia arriba y atrás
-      p.position.y += delta * 2;
-      p.position.z -= delta * 3;
+      // Mover hacia atrás siguiendo la rotación
+      this.tempVector.set(0, 0, 1).applyEuler(p.rotation).multiplyScalar(delta * 8);
+      p.position.sub(this.tempVector);
 
-      // Encoger suavemente
-      p.scale.multiplyScalar(0.97);
-
+      // Desvanecer
       if (p.material instanceof THREE.Material) {
-        const fadeSpeed = p.userData.fadeSpeed || 2.0;
-        p.material.opacity -= delta * fadeSpeed;
-        if (p.material.opacity <= 0 || p.scale.x < 0.1) {
+        p.material.opacity -= delta * 1.5;
+        if (p.material.opacity <= 0) {
           this.scene.remove(p);
+          // No disposear geometry compartida
           p.material.dispose();
           this.trailParticles.splice(i, 1);
         }
