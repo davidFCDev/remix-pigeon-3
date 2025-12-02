@@ -329,7 +329,7 @@ export class MainScene {
   }
 
   /**
-   * Crea una nube estilizada con forma natural
+   * Crea una nube con forma definida y natural (estilo cúmulo)
    */
   private createCloud(x: number, z: number): void {
     const cloudGroup = new THREE.Group();
@@ -338,51 +338,76 @@ export class MainScene {
     const baseY = 20;
     cloudGroup.position.set(x, baseY, z);
 
-    // Material suave
+    // Material principal - más opaco para mejor definición
     const cloudMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
-      opacity: 0.4,
+      opacity: 0.5,
     });
 
-    // Estructura de nube natural: base grande + cúpulas arriba
-    // Base principal (elipse grande)
-    const base = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
-    base.scale.set(30, 8, 25);
-    base.position.set(0, 0, 0);
-    cloudGroup.add(base);
+    // Material para sombras sutiles (parte inferior)
+    const shadowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xe8e8e8,
+      transparent: true,
+      opacity: 0.45,
+    });
 
-    // Cúpulas superiores para dar forma de nube
-    const domePositions = [
-      { x: -10, y: 4, z: 0, sx: 15, sy: 10, sz: 14 },
-      { x: 8, y: 5, z: 5, sx: 18, sy: 12, sz: 16 },
-      { x: 5, y: 3, z: -8, sx: 14, sy: 9, sz: 12 },
-      { x: -5, y: 6, z: 6, sx: 12, sy: 10, sz: 11 },
+    // === FORMA DE NUBE CÚMULO ===
+    
+    // Cuerpo central grande
+    const core = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
+    core.scale.set(22, 12, 20);
+    core.position.set(0, 2, 0);
+    cloudGroup.add(core);
+
+    // Cúpula principal (la más alta, centro)
+    const mainDome = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
+    mainDome.scale.set(16, 14, 15);
+    mainDome.position.set(2, 10, 0);
+    cloudGroup.add(mainDome);
+
+    // Cúpulas secundarias (los "bultos" característicos)
+    const secondaryDomes = [
+      { x: -12, y: 6, z: 2, sx: 14, sy: 11, sz: 13 },
+      { x: 10, y: 7, z: -4, sx: 13, sy: 10, sz: 12 },
+      { x: -4, y: 8, z: 10, sx: 12, sy: 9, sz: 11 },
+      { x: 6, y: 5, z: 8, sx: 11, sy: 8, sz: 10 },
     ];
 
-    for (const dome of domePositions) {
+    for (const dome of secondaryDomes) {
       const sphere = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
       sphere.scale.set(dome.sx, dome.sy, dome.sz);
       sphere.position.set(dome.x, dome.y, dome.z);
       cloudGroup.add(sphere);
     }
 
-    // Bordes suaves a los lados
-    const side1 = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
-    side1.scale.set(12, 6, 10);
-    side1.position.set(-18, -1, 3);
-    cloudGroup.add(side1);
+    // Bultos pequeños para textura (bordes esponjosos)
+    const puffs = [
+      { x: -18, y: 3, z: 0, s: 8 },
+      { x: 16, y: 2, z: 3, s: 7 },
+      { x: -8, y: 4, z: -12, s: 9 },
+      { x: 12, y: 3, z: -10, s: 7 },
+      { x: 0, y: 2, z: 14, s: 8 },
+    ];
 
-    const side2 = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
-    side2.scale.set(10, 5, 12);
-    side2.position.set(16, -1, -4);
-    cloudGroup.add(side2);
+    for (const puff of puffs) {
+      const sphere = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
+      sphere.scale.set(puff.s, puff.s * 0.7, puff.s);
+      sphere.position.set(puff.x, puff.y, puff.z);
+      cloudGroup.add(sphere);
+    }
+
+    // Base inferior (sombra sutil - más plana)
+    const bottom = new THREE.Mesh(this.cloudGeometry, shadowMaterial);
+    bottom.scale.set(28, 4, 24);
+    bottom.position.set(0, -3, 0);
+    cloudGroup.add(bottom);
 
     // Radio de colisión
     cloudGroup.userData = {
       radius: 35,
       floatOffset: Math.random() * Math.PI * 2,
-      floatSpeed: 0.2,
+      floatSpeed: 0.15,
       initialY: baseY,
     };
 
