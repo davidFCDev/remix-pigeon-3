@@ -27,6 +27,9 @@ export class MainScene {
   private score: number = 0;
   private scoreElement: HTMLElement | null = null;
 
+  // Sistema de Donuts Dorados (Especiales - dan más puntos y hambre)
+  private goldenDonuts: THREE.Group[] = [];
+
   // Sistema de Hambre
   private maxHunger: number = 100;
   private currentHunger: number = 100;
@@ -221,6 +224,7 @@ export class MainScene {
 
     this.initPowerUps();
     this.initDonuts();
+    this.initGoldenDonuts();
     this.initFlamingos();
   }
 
@@ -363,6 +367,139 @@ export class MainScene {
   }
 
   /**
+   * Inicializa los Donuts Dorados (Especiales - esperan a que el modelo de donut esté cargado)
+   */
+  private initGoldenDonuts(): void {
+    // Esperamos a que el modelo de donut esté cargado
+    const checkDonutModel = () => {
+      if (this.donutModel) {
+        console.log("Golden donuts initialized");
+        // Generar solo 5 donuts dorados (son especiales)
+        for (let i = 0; i < 5; i++) {
+          this.spawnRandomGoldenDonut();
+        }
+      } else {
+        // Reintentar en 100ms
+        setTimeout(checkDonutModel, 100);
+      }
+    };
+    checkDonutModel();
+  }
+
+  /**
+   * Crea un nuevo Donut Dorado en una posición aleatoria
+   */
+  private spawnRandomGoldenDonut(): void {
+    const pos = this.generateRandomPosition();
+    this.spawnGoldenDonut(pos);
+  }
+
+  /**
+   * Crea un nuevo Donut Dorado en la posición dada
+   */
+  private spawnGoldenDonut(position: THREE.Vector3): void {
+    if (!this.donutModel) return;
+
+    const goldenDonut = this.donutModel.clone();
+    goldenDonut.position.copy(position);
+
+    // Rotación aleatoria en Y
+    goldenDonut.rotation.y = Math.random() * Math.PI * 2;
+
+    // Animación flotante (userData)
+    goldenDonut.userData = {
+      initialY: position.y,
+      floatSpeed: 0.8 + Math.random() * 0.4,
+      floatOffset: Math.random() * Math.PI * 2,
+      rotationSpeed: 0.5 + Math.random() * 0.5,
+      isGolden: true, // Marcador para identificarlo
+    };
+
+    this.scene.add(goldenDonut);
+    this.goldenDonuts.push(goldenDonut);
+
+    // Añadir Aura Amarilla/Dorada (Especial)
+    const auraGeo = new THREE.SphereGeometry(1.2, 16, 16);
+    const auraMat = new THREE.MeshBasicMaterial({
+      color: 0xffd700, // Dorado
+      transparent: true,
+      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      side: THREE.FrontSide,
+      depthWrite: false,
+    });
+    const aura = new THREE.Mesh(auraGeo, auraMat);
+    aura.position.y = 0;
+    goldenDonut.add(aura);
+  }
+
+  /**
+   * Gestiona la recolección de un Donut Dorado (Especial)
+   */
+  private collectGoldenDonut(index: number): void {
+    const collectedDonut = this.goldenDonuts[index];
+
+    // Reproducir sonido (especial)
+    this.audioManager.playPowerUpSound();
+
+    // Efecto visual: Explosión dorada
+    this.createGoldenExplosion(collectedDonut.position);
+
+    // Eliminar
+    this.scene.remove(collectedDonut);
+    this.goldenDonuts.splice(index, 1);
+
+    // Incrementar puntuación (+5 puntos)
+    this.score += 5;
+    if (this.scoreElement) {
+      this.scoreElement.innerText = this.score.toString();
+    }
+
+    // Restaurar MUCHA hambre
+    this.currentHunger = Math.min(this.maxHunger, this.currentHunger + 40);
+
+    // Reponer Donut Dorado
+    this.spawnRandomGoldenDonut();
+  }
+
+  /**
+   * Crea una explosión dorada para los donuts dorados
+   */
+  private createGoldenExplosion(position: THREE.Vector3): void {
+    const particleCount = 20;
+    const geometry = new THREE.TorusGeometry(0.3, 0.15, 8, 12);
+
+    for (let i = 0; i < particleCount; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffd700, // Dorado
+        transparent: true,
+        opacity: 0.9,
+      });
+
+      const particle = new THREE.Mesh(geometry, material);
+      particle.position.copy(position);
+
+      // Velocidad aleatoria en todas direcciones
+      particle.userData = {
+        velocity: new THREE.Vector3(
+          (Math.random() - 0.5) * 18,
+          (Math.random() - 0.5) * 18,
+          (Math.random() - 0.5) * 18
+        ),
+        rotationSpeed: new THREE.Vector3(
+          Math.random() * 5,
+          Math.random() * 5,
+          Math.random() * 5
+        ),
+        life: 1.0,
+      };
+
+      this.scene.add(particle);
+      this.particles.push(particle);
+    }
+  }
+
+  /**
    * Genera una posición aleatoria dentro de los límites del mapa
    */
   private generateRandomPosition(): THREE.Vector3 {
@@ -463,7 +600,7 @@ export class MainScene {
   }
 
   /**
-   * Comprueba colisiones con Power-ups y Donuts
+   * Comprueba colisiones con Power-ups, Donuts y Tartas
    */
   private checkCollisions(): void {
     // 1. Power-ups (Aros)
@@ -483,6 +620,16 @@ export class MainScene {
 
       if (distance < 6) {
         this.collectDonut(i);
+      }
+    }
+
+    // 3. Donuts Dorados (Especiales - 5 puntos y mucha hambre)
+    for (let i = this.goldenDonuts.length - 1; i >= 0; i--) {
+      const goldenDonut = this.goldenDonuts[i];
+      const distance = this.pigeon.position.distanceTo(goldenDonut.position);
+
+      if (distance < 6) {
+        this.collectGoldenDonut(i);
       }
     }
   }
@@ -1225,6 +1372,23 @@ export class MainScene {
               donut.userData.floatOffset
           ) *
             0.5; // Reducido amplitud
+      }
+    });
+
+    // Rotar los Donuts Dorados (Especiales)
+    this.goldenDonuts.forEach((goldenDonut) => {
+      if (goldenDonut.userData.rotationSpeed) {
+        goldenDonut.rotation.y += goldenDonut.userData.rotationSpeed * delta;
+      }
+      // Flotar
+      if (goldenDonut.userData.initialY) {
+        goldenDonut.position.y =
+          goldenDonut.userData.initialY +
+          Math.sin(
+            this.clock.getElapsedTime() * goldenDonut.userData.floatSpeed +
+              goldenDonut.userData.floatOffset
+          ) *
+            0.8; // Amplitud un poco mayor para destacar
       }
     });
 
