@@ -498,9 +498,9 @@ export class MainScene {
 
     // Mostrar texto flotante (siempre para dorado, especial si hay boost)
     if (this.isSpeedBoostActive) {
-      this.createFloatingText(collectedDonut.position, "GOLDEN x2!", 0xffd700);
+      this.createFloatingText("golden x2");
     } else {
-      this.createFloatingText(collectedDonut.position, "+5 GOLDEN!", 0xffd700);
+      this.createFloatingText("+5");
     }
 
     // Restaurar MUCHA hambre
@@ -735,7 +735,7 @@ export class MainScene {
     if (this.isSpeedBoostActive) {
       const phrase =
         this.boostPhrases[Math.floor(Math.random() * this.boostPhrases.length)];
-      this.createFloatingText(collectedDonut.position, phrase, 0x00ffff);
+      this.createFloatingText(phrase);
     }
 
     // Restaurar hambre (Comer)
@@ -817,11 +817,7 @@ export class MainScene {
   /**
    * Crea un texto flotante en HTML que sube y se desvanece (siempre visible)
    */
-  private createFloatingText(
-    position: THREE.Vector3,
-    text: string,
-    color: number
-  ): void {
+  private createFloatingText(text: string): void {
     // Obtener contenedor si no existe
     if (!this.floatingTextsContainer) {
       this.floatingTextsContainer = document.getElementById("floating-texts");
@@ -832,18 +828,17 @@ export class MainScene {
     const textElement = document.createElement("div");
     textElement.className = "floating-text";
     textElement.textContent = text;
-    textElement.style.color = `#${color.toString(16).padStart(6, "0")}`;
     
     // Añadir variación horizontal aleatoria para que no se superpongan
-    const randomOffset = (Math.random() - 0.5) * 30;
+    const randomOffset = (Math.random() - 0.5) * 60;
     textElement.style.left = `calc(50% + ${randomOffset}px)`;
 
     this.floatingTextsContainer.appendChild(textElement);
 
-    // Eliminar después de la animación (1.5s)
+    // Eliminar después de la animación
     setTimeout(() => {
       textElement.remove();
-    }, 1500);
+    }, 1200);
   }
 
   // Eliminado: spawnPowerUp

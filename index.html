@@ -89,27 +89,31 @@
       .floating-text {
         position: absolute;
         left: 50%;
-        top: 40%;
+        top: 35%;
         transform: translateX(-50%);
-        font-family: 'Arial Black', Arial, sans-serif;
-        font-size: 48px;
-        font-weight: bold;
-        text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.8), 0 0 20px currentColor;
-        animation: floatUp 1.5s ease-out forwards;
+        font-family: 'Segoe UI', Arial, sans-serif;
+        font-size: 18px;
+        font-weight: 500;
+        letter-spacing: 2px;
+        color: rgba(255, 255, 255, 0.9);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+        animation: floatUp 1.2s ease-out forwards;
         white-space: nowrap;
+        text-transform: uppercase;
       }
 
       @keyframes floatUp {
         0% {
-          opacity: 1;
-          transform: translateX(-50%) translateY(0) scale(0.5);
+          opacity: 0;
+          transform: translateX(-50%) translateY(10px);
         }
-        20% {
-          transform: translateX(-50%) translateY(-20px) scale(1.2);
+        15% {
+          opacity: 1;
+          transform: translateX(-50%) translateY(0);
         }
         100% {
           opacity: 0;
-          transform: translateX(-50%) translateY(-120px) scale(1);
+          transform: translateX(-50%) translateY(-40px);
         }
       }
     </style>
