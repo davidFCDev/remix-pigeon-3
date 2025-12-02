@@ -65,6 +65,7 @@ export class MainScene {
   // private powerUpGeometry!: THREE.SphereGeometry; // Eliminado
   // private powerUpMaterial!: THREE.MeshToonMaterial; // Eliminado
   private explosionGeometry!: THREE.TorusGeometry;
+  private trailGeometry: THREE.BoxGeometry | null = null; // Geometría compartida para estela
   private isSpeedBoostActive: boolean = false;
   private speedBoostTimer: number = 0;
   private baseSpeed: number = 25.0;
@@ -121,6 +122,17 @@ export class MainScene {
   private isTurningRight: boolean = false;
   private currentTurnSpeed: number = 0; // Para suavizar el giro en móvil
 
+  // Optimización: Detectar móvil una sola vez
+  private isMobile: boolean = false;
+  
+  // Optimización: Objetos reutilizables para evitar garbage collection
+  private tempVector: THREE.Vector3 = new THREE.Vector3();
+  private tempVector2: THREE.Vector3 = new THREE.Vector3();
+  private dummyObject: THREE.Object3D = new THREE.Object3D();
+
+  // Optimización: Cache del tiempo transcurrido
+  private cachedElapsedTime: number = 0;
+
   private assets: { [key: string]: any };
 
   constructor(assets: { [key: string]: any }) {
@@ -143,20 +155,25 @@ export class MainScene {
     this.camera = new THREE.PerspectiveCamera(75, aspectRatio, 0.1, 4000);
 
     // Crear renderer - Optimizado para móviles
-    const isMobile =
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-        navigator.userAgent
-      );
+    this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+      navigator.userAgent
+    );
+    
     this.renderer = new THREE.WebGLRenderer({
-      antialias: !isMobile, // Desactivar antialiasing en móviles
+      antialias: !this.isMobile, // Desactivar antialiasing en móviles
       powerPreference: "high-performance",
+      stencil: false, // Desactivar stencil buffer si no se usa
+      depth: true,
     });
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(
-      isMobile ? 1 : Math.min(window.devicePixelRatio, 2)
+      this.isMobile ? 1 : Math.min(window.devicePixelRatio, 2)
     ); // Reducir resolución en móviles
-    this.renderer.shadowMap.enabled = !isMobile; // Desactivar sombras en móviles
+    this.renderer.shadowMap.enabled = !this.isMobile; // Desactivar sombras en móviles
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    
+    // Optimización: Desactivar auto-clear si manejamos manualmente
+    // this.renderer.autoClear = true;
 
     // Manejar redimensionamiento de ventana
     window.addEventListener("resize", this.handleResize);
@@ -1341,24 +1358,23 @@ export class MainScene {
       }
     }
 
-    // Rotar los Power-ups
-    this.powerUps.forEach((pu) => {
+    // Rotar los Power-ups - Optimizado con for loop
+    for (let i = 0; i < this.powerUps.length; i++) {
+      const pu = this.powerUps[i];
       if (pu.userData.rotationSpeed) {
-        pu.rotation.y += 2.0 * delta; // Rotación simple para aros
+        pu.rotation.y += 2.0 * delta;
       }
-      // Flotar (Muy sutil alrededor de la altura fija)
+      // Flotar
       if (pu.userData.initialY) {
         pu.position.y =
           pu.userData.initialY +
-          Math.sin(
-            this.clock.getElapsedTime() * 1.5 + pu.userData.floatOffset
-          ) *
-            0.5; // Reducido amplitud
+          Math.sin(this.cachedElapsedTime * 1.5 + pu.userData.floatOffset) * 0.5;
       }
-    });
+    }
 
-    // Rotar los Donuts
-    this.donuts.forEach((donut) => {
+    // Rotar los Donuts - Usando for loop (más eficiente que forEach)
+    for (let i = 0; i < this.donuts.length; i++) {
+      const donut = this.donuts[i];
       if (donut.userData.rotationSpeed) {
         donut.rotation.x += donut.userData.rotationSpeed.x * delta;
         donut.rotation.y += donut.userData.rotationSpeed.y * delta;
@@ -1367,16 +1383,13 @@ export class MainScene {
       if (donut.userData.initialY) {
         donut.position.y =
           donut.userData.initialY +
-          Math.sin(
-            this.clock.getElapsedTime() * donut.userData.floatSpeed +
-              donut.userData.floatOffset
-          ) *
-            0.5; // Reducido amplitud
+          Math.sin(this.cachedElapsedTime * donut.userData.floatSpeed + donut.userData.floatOffset) * 0.5;
       }
-    });
+    }
 
-    // Rotar los Donuts Dorados (Especiales)
-    this.goldenDonuts.forEach((goldenDonut) => {
+    // Rotar los Donuts Dorados (Especiales) - Usando for loop
+    for (let i = 0; i < this.goldenDonuts.length; i++) {
+      const goldenDonut = this.goldenDonuts[i];
       if (goldenDonut.userData.rotationSpeed) {
         goldenDonut.rotation.y += goldenDonut.userData.rotationSpeed * delta;
       }
@@ -1384,13 +1397,9 @@ export class MainScene {
       if (goldenDonut.userData.initialY) {
         goldenDonut.position.y =
           goldenDonut.userData.initialY +
-          Math.sin(
-            this.clock.getElapsedTime() * goldenDonut.userData.floatSpeed +
-              goldenDonut.userData.floatOffset
-          ) *
-            0.8; // Amplitud un poco mayor para destacar
+          Math.sin(this.cachedElapsedTime * goldenDonut.userData.floatSpeed + goldenDonut.userData.floatOffset) * 0.8;
       }
-    });
+    }
 
     // Comprobar colisiones
     this.checkCollisions();
@@ -1402,23 +1411,27 @@ export class MainScene {
         this.isSpeedBoostActive = false;
       }
 
-      // Generar estela de velocidad
-      if (Math.random() < 0.5) {
-        const trailGeo = new THREE.BoxGeometry(0.2, 0.2, 8);
+      // Generar estela de velocidad - Reducida frecuencia en móviles
+      const trailChance = this.isMobile ? 0.2 : 0.4;
+      if (Math.random() < trailChance && this.trailParticles.length < 20) {
+        // Reutilizar geometría compartida
+        if (!this.trailGeometry) {
+          this.trailGeometry = new THREE.BoxGeometry(0.2, 0.2, 8);
+        }
         const trailMat = new THREE.MeshBasicMaterial({
           color: 0x00ffff,
           transparent: true,
           opacity: 0.6,
         });
-        const trail = new THREE.Mesh(trailGeo, trailMat);
+        const trail = new THREE.Mesh(this.trailGeometry, trailMat);
 
-        const offset = new THREE.Vector3(
+        this.tempVector.set(
           (Math.random() - 0.5) * 6,
           (Math.random() - 0.5) * 6,
           -2
         );
-        offset.applyEuler(this.pigeon.rotation);
-        trail.position.copy(this.pigeon.position).add(offset);
+        this.tempVector.applyEuler(this.pigeon.rotation);
+        trail.position.copy(this.pigeon.position).add(this.tempVector);
         trail.rotation.copy(this.pigeon.rotation);
 
         this.scene.add(trail);
@@ -1426,19 +1439,17 @@ export class MainScene {
       }
     }
 
-    // Actualizar partículas de estela
+    // Actualizar partículas de estela - Optimizado
     for (let i = this.trailParticles.length - 1; i >= 0; i--) {
       const p = this.trailParticles[i];
-      const backward = new THREE.Vector3(0, 0, 1)
-        .applyEuler(p.rotation)
-        .multiplyScalar(delta * 5);
-      p.position.sub(backward);
+      this.tempVector2.set(0, 0, 1).applyEuler(p.rotation).multiplyScalar(delta * 5);
+      p.position.sub(this.tempVector2);
 
       if (p.material instanceof THREE.Material) {
         p.material.opacity -= delta * 2.0;
         if (p.material.opacity <= 0) {
           this.scene.remove(p);
-          p.geometry.dispose();
+          // No disposear geometry compartida
           p.material.dispose();
           this.trailParticles.splice(i, 1);
         }
@@ -1488,16 +1499,14 @@ export class MainScene {
       // 2. Moverse hacia el objetivo
       const targetDonut = this.donuts[flamingo.targetIndex];
 
-      // Mirar suavemente hacia el objetivo
-      const targetPos = targetDonut.position.clone();
-      const direction = targetPos.sub(flamingo.mesh.position).normalize();
+      // Mirar suavemente hacia el objetivo (reutilizando objetos)
+      this.tempVector.copy(targetDonut.position).sub(flamingo.mesh.position).normalize();
 
-      // Calcular rotación objetivo (LookAt manual suave)
-      const dummy = new THREE.Object3D();
-      dummy.position.copy(flamingo.mesh.position);
-      dummy.lookAt(targetDonut.position);
+      // Calcular rotación objetivo (LookAt manual suave) - Reutilizando dummy
+      this.dummyObject.position.copy(flamingo.mesh.position);
+      this.dummyObject.lookAt(targetDonut.position);
 
-      flamingo.mesh.quaternion.slerp(dummy.quaternion, delta * 2.0);
+      flamingo.mesh.quaternion.slerp(this.dummyObject.quaternion, delta * 2.0);
 
       // Avanzar
       flamingo.mesh.translateZ(flamingo.speed * delta);
@@ -1602,6 +1611,9 @@ export class MainScene {
 
     // Calcular delta time (tiempo transcurrido desde el último frame en segundos)
     const delta = this.clock.getDelta();
+    
+    // Cache del tiempo transcurrido (evita múltiples llamadas)
+    this.cachedElapsedTime = this.clock.getElapsedTime();
 
     // Actualizar hambre
     this.updateHunger(delta);
