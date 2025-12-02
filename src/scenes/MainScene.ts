@@ -412,7 +412,7 @@ export class MainScene {
   }
 
   /**
-   * Crea un nuevo Donut Dorado en la posición dada
+   * Crea un nuevo Donut Dorado en la posición dada (igual que el normal pero con aura dorada)
    */
   private spawnGoldenDonut(position: THREE.Vector3): void {
     if (!this.donutModel) return;
@@ -420,33 +420,36 @@ export class MainScene {
     const goldenDonut = this.donutModel.clone();
     goldenDonut.position.copy(position);
 
-    // Rotación aleatoria en Y
-    goldenDonut.rotation.y = Math.random() * Math.PI * 2;
+    // Orientación aleatoria inicial (igual que donut normal)
+    goldenDonut.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
 
-    // Animación flotante (userData)
+    // Animación flotante (userData) - Exactamente igual que donut normal
     goldenDonut.userData = {
       initialY: position.y,
-      floatSpeed: 0.8 + Math.random() * 0.4,
+      floatSpeed: 1.0 + Math.random(),
       floatOffset: Math.random() * Math.PI * 2,
-      rotationSpeed: 0.5 + Math.random() * 0.5,
+      rotationSpeed: new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2,
+        0
+      ),
       isGolden: true, // Marcador para identificarlo
     };
 
     this.scene.add(goldenDonut);
     this.goldenDonuts.push(goldenDonut);
 
-    // Añadir Aura Amarilla/Dorada (Especial)
-    const auraGeo = new THREE.SphereGeometry(1.2, 16, 16);
+    // Añadir Aura Dorada (mismo tamaño que el normal, solo cambia el color)
+    const auraGeo = new THREE.SphereGeometry(0.8, 16, 16);
     const auraMat = new THREE.MeshBasicMaterial({
       color: 0xffd700, // Dorado
       transparent: true,
-      opacity: 0.4,
+      opacity: 0.3,
       blending: THREE.AdditiveBlending,
       side: THREE.FrontSide,
       depthWrite: false,
     });
     const aura = new THREE.Mesh(auraGeo, auraMat);
-    aura.position.y = 0;
     goldenDonut.add(aura);
   }
 
@@ -1387,17 +1390,18 @@ export class MainScene {
       }
     }
 
-    // Rotar los Donuts Dorados (Especiales) - Usando for loop
+    // Rotar los Donuts Dorados (Especiales) - Igual que los normales
     for (let i = 0; i < this.goldenDonuts.length; i++) {
       const goldenDonut = this.goldenDonuts[i];
       if (goldenDonut.userData.rotationSpeed) {
-        goldenDonut.rotation.y += goldenDonut.userData.rotationSpeed * delta;
+        goldenDonut.rotation.x += goldenDonut.userData.rotationSpeed.x * delta;
+        goldenDonut.rotation.y += goldenDonut.userData.rotationSpeed.y * delta;
       }
-      // Flotar
+      // Flotar (misma amplitud que donuts normales)
       if (goldenDonut.userData.initialY) {
         goldenDonut.position.y =
           goldenDonut.userData.initialY +
-          Math.sin(this.cachedElapsedTime * goldenDonut.userData.floatSpeed + goldenDonut.userData.floatOffset) * 0.8;
+          Math.sin(this.cachedElapsedTime * goldenDonut.userData.floatSpeed + goldenDonut.userData.floatOffset) * 0.5;
       }
     }
 
