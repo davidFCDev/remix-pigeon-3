@@ -74,6 +74,12 @@ export class MainScene {
   private boostSpeed: number = 80.0; // Ultravelocidad
   private trailParticles: THREE.Mesh[] = [];
 
+  // Sistema de Nubes (Ralentizan al jugador)
+  private clouds: THREE.Group[] = [];
+  private cloudGeometry!: THREE.SphereGeometry;
+  private isInCloud: boolean = false;
+  private cloudSlowSpeed: number = 12.0; // Velocidad reducida en nubes
+
   // Sistema de textos flotantes (feedback visual - HTML)
   private floatingTextsContainer: HTMLElement | null = null;
   private boostPhrases: string[] = [
@@ -261,6 +267,7 @@ export class MainScene {
     this.initDonuts();
     this.initGoldenDonuts();
     this.initFlamingos();
+    this.initClouds();
   }
 
   /**
@@ -298,6 +305,76 @@ export class MainScene {
     } else {
       console.error("Flamingo asset not found in cache");
     }
+  }
+
+  /**
+   * Inicializa las Nubes (Zonas que ralentizan)
+   */
+  private initClouds(): void {
+    // Geometría compartida para todas las esferas de nubes
+    this.cloudGeometry = new THREE.SphereGeometry(1, 8, 6);
+
+    // Generar 6 nubes grandes distribuidas por el mapa
+    const cloudPositions = [
+      { x: -200, z: -150 },
+      { x: 180, z: -200 },
+      { x: -150, z: 180 },
+      { x: 200, z: 150 },
+      { x: 0, z: -250 },
+      { x: -50, z: 100 },
+    ];
+
+    for (const pos of cloudPositions) {
+      this.createCloud(pos.x, pos.z);
+    }
+  }
+
+  /**
+   * Crea una nube grande compuesta de varias esferas
+   */
+  private createCloud(x: number, z: number): void {
+    const cloudGroup = new THREE.Group();
+
+    // Altura entre 15 y 30 (donde vuela la paloma)
+    const baseY = 18 + Math.random() * 10;
+    cloudGroup.position.set(x, baseY, z);
+
+    // Material semi-transparente blanco
+    const cloudMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.4,
+    });
+
+    // Crear varias esferas para formar la nube (8-12 esferas)
+    const sphereCount = 8 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < sphereCount; i++) {
+      const sphere = new THREE.Mesh(this.cloudGeometry, cloudMaterial.clone());
+
+      // Tamaño variable para cada esfera
+      const scale = 15 + Math.random() * 20;
+      sphere.scale.set(scale, scale * 0.6, scale); // Achatadas
+
+      // Posición aleatoria dentro del grupo
+      sphere.position.set(
+        (Math.random() - 0.5) * 50,
+        (Math.random() - 0.5) * 8,
+        (Math.random() - 0.5) * 50
+      );
+
+      cloudGroup.add(sphere);
+    }
+
+    // Radio de colisión (zona de efecto)
+    cloudGroup.userData = {
+      radius: 45, // Radio de la zona de ralentización
+      floatOffset: Math.random() * Math.PI * 2,
+      floatSpeed: 0.3 + Math.random() * 0.2,
+      initialY: baseY,
+    };
+
+    this.scene.add(cloudGroup);
+    this.clouds.push(cloudGroup);
   }
 
   /**
@@ -711,6 +788,23 @@ export class MainScene {
 
       if (distance < 6) {
         this.collectGoldenDonut(i);
+      }
+    }
+
+    // 4. Nubes (Zonas de ralentización) - Solo comprobar distancia horizontal
+    this.isInCloud = false;
+    for (let i = 0; i < this.clouds.length; i++) {
+      const cloud = this.clouds[i];
+      const dx = this.pigeon.position.x - cloud.position.x;
+      const dz = this.pigeon.position.z - cloud.position.z;
+      const horizontalDist = Math.sqrt(dx * dx + dz * dz);
+
+      // También comprobar altura (estar dentro de la nube verticalmente)
+      const dy = Math.abs(this.pigeon.position.y - cloud.position.y);
+
+      if (horizontalDist < cloud.userData.radius && dy < 15) {
+        this.isInCloud = true;
+        break;
       }
     }
   }
@@ -1384,10 +1478,16 @@ export class MainScene {
     this.pigeon.rotation.x = 0;
 
     // 2. Movimiento Constante
-    // Suavizado de velocidad (Turbo)
-    const targetSpeed = this.isSpeedBoostActive
+    // Suavizado de velocidad (Turbo y Nubes)
+    let targetSpeed = this.isSpeedBoostActive
       ? this.boostSpeed
       : this.baseSpeed;
+
+    // Reducir velocidad si estamos en una nube (pero no si tenemos boost)
+    if (this.isInCloud && !this.isSpeedBoostActive) {
+      targetSpeed = this.cloudSlowSpeed;
+    }
+
     this.pigeonSpeed = THREE.MathUtils.lerp(
       this.pigeonSpeed,
       targetSpeed,
@@ -1470,6 +1570,20 @@ export class MainScene {
           p.material.dispose();
           this.particles.splice(i, 1);
         }
+      }
+    }
+
+    // Animar nubes (flotar suavemente)
+    for (let i = 0; i < this.clouds.length; i++) {
+      const cloud = this.clouds[i];
+      if (cloud.userData.initialY) {
+        cloud.position.y =
+          cloud.userData.initialY +
+          Math.sin(
+            this.cachedElapsedTime * cloud.userData.floatSpeed +
+              cloud.userData.floatOffset
+          ) *
+            2;
       }
     }
 
