@@ -72,8 +72,8 @@ export class MainScene {
   private boostSpeed: number = 80.0; // Ultravelocidad
   private trailParticles: THREE.Mesh[] = [];
 
-  // Sistema de textos flotantes (feedback visual)
-  private floatingTexts: THREE.Sprite[] = [];
+  // Sistema de textos flotantes (feedback visual - HTML)
+  private floatingTextsContainer: HTMLElement | null = null;
   private boostPhrases: string[] = [
     "EXCELLENT!",
     "AMAZING!",
@@ -84,7 +84,7 @@ export class MainScene {
     "INCREDIBLE!",
     "x2 BONUS!",
     "TURBO!",
-    "ON FIRE!"
+    "ON FIRE!",
   ];
 
   // Animación
@@ -733,7 +733,8 @@ export class MainScene {
 
     // Mostrar texto flotante si hay boost activo
     if (this.isSpeedBoostActive) {
-      const phrase = this.boostPhrases[Math.floor(Math.random() * this.boostPhrases.length)];
+      const phrase =
+        this.boostPhrases[Math.floor(Math.random() * this.boostPhrases.length)];
       this.createFloatingText(collectedDonut.position, phrase, 0x00ffff);
     }
 
@@ -814,55 +815,35 @@ export class MainScene {
   }
 
   /**
-   * Crea un texto flotante que sube y se desvanece
+   * Crea un texto flotante en HTML que sube y se desvanece (siempre visible)
    */
-  private createFloatingText(position: THREE.Vector3, text: string, color: number): void {
-    // Crear canvas para el texto
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d")!;
-    canvas.width = 256;
-    canvas.height = 64;
+  private createFloatingText(
+    position: THREE.Vector3,
+    text: string,
+    color: number
+  ): void {
+    // Obtener contenedor si no existe
+    if (!this.floatingTextsContainer) {
+      this.floatingTextsContainer = document.getElementById("floating-texts");
+    }
+    if (!this.floatingTextsContainer) return;
 
-    // Configurar texto
-    ctx.fillStyle = "transparent";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Crear elemento de texto
+    const textElement = document.createElement("div");
+    textElement.className = "floating-text";
+    textElement.textContent = text;
+    textElement.style.color = `#${color.toString(16).padStart(6, "0")}`;
     
-    // Sombra para mejor legibilidad
-    ctx.shadowColor = "black";
-    ctx.shadowBlur = 4;
-    ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 2;
-    
-    // Texto principal
-    ctx.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
-    ctx.font = "bold 36px Arial";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    // Añadir variación horizontal aleatoria para que no se superpongan
+    const randomOffset = (Math.random() - 0.5) * 30;
+    textElement.style.left = `calc(50% + ${randomOffset}px)`;
 
-    // Crear textura y sprite
-    const texture = new THREE.CanvasTexture(canvas);
-    const spriteMaterial = new THREE.SpriteMaterial({
-      map: texture,
-      transparent: true,
-      depthTest: false,
-    });
-    const sprite = new THREE.Sprite(spriteMaterial);
-    
-    // Posicionar encima del punto de recolección
-    sprite.position.copy(position);
-    sprite.position.y += 3;
-    sprite.scale.set(8, 2, 1);
+    this.floatingTextsContainer.appendChild(textElement);
 
-    // Datos para animación
-    sprite.userData = {
-      velocity: 5, // Velocidad de subida
-      life: 1.5, // Duración en segundos
-      initialY: sprite.position.y,
-    };
-
-    this.scene.add(sprite);
-    this.floatingTexts.push(sprite);
+    // Eliminar después de la animación (1.5s)
+    setTimeout(() => {
+      textElement.remove();
+    }, 1500);
   }
 
   // Eliminado: spawnPowerUp
@@ -1556,32 +1537,6 @@ export class MainScene {
           p.material.dispose();
           this.trailParticles.splice(i, 1);
         }
-      }
-    }
-
-    // Actualizar textos flotantes
-    for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
-      const text = this.floatingTexts[i];
-      
-      // Subir el texto
-      text.position.y += text.userData.velocity * delta;
-      
-      // Reducir vida
-      text.userData.life -= delta;
-      
-      // Desvanecer
-      if (text.material instanceof THREE.SpriteMaterial) {
-        text.material.opacity = Math.max(0, text.userData.life / 1.5);
-      }
-      
-      // Eliminar si terminó
-      if (text.userData.life <= 0) {
-        this.scene.remove(text);
-        if (text.material instanceof THREE.SpriteMaterial) {
-          text.material.map?.dispose();
-          text.material.dispose();
-        }
-        this.floatingTexts.splice(i, 1);
       }
     }
 
