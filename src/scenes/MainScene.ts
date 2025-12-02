@@ -345,11 +345,11 @@ export class MainScene {
     // Geometría circular - más fino y elegante
     this.powerUpGeometry = new THREE.TorusGeometry(4, 0.15, 16, 48);
 
-    // Material para los aros (Blanco con brillo suave)
+    // Material para los aros (Amarillo dorado brillante)
     this.powerUpMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+      color: 0xffdd44,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.95,
     });
 
     // Generar 15 Power-ups dispersos
@@ -597,7 +597,7 @@ export class MainScene {
     // Aro interior (más pequeño, rotado)
     const innerGeom = new THREE.TorusGeometry(2.8, 0.1, 16, 48);
     const innerMat = new THREE.MeshBasicMaterial({
-      color: 0xaaddff,
+      color: 0xffaa00,
       transparent: true,
       opacity: 0.7,
     });
@@ -609,7 +609,7 @@ export class MainScene {
     for (let i = 0; i < 6; i++) {
       const particleGeom = new THREE.SphereGeometry(0.15, 8, 8);
       const particleMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
+        color: 0xffee88,
         transparent: true,
         opacity: 0.6,
       });
@@ -833,13 +833,13 @@ export class MainScene {
       const windLine = new THREE.Line(lineGeom, lineMat);
       windLine.position.copy(position);
       windLine.rotation.copy(rotation);
-      
+
       windLine.userData = {
         velocityX: 25 + Math.random() * 10,
         fadeSpeed: 2.0 + Math.random(),
         life: 1.0,
       };
-      
+
       this.scene.add(windLine);
       this.ringEffects.push(windLine as unknown as THREE.Mesh);
     }
@@ -1414,20 +1414,22 @@ export class MainScene {
     // Animar efectos de aros (partículas dispersas y líneas de viento)
     for (let i = this.ringEffects.length - 1; i >= 0; i--) {
       const effect = this.ringEffects[i];
-      
+
       // Mover partículas/líneas
       if (effect.userData.velocityX !== undefined) {
         effect.position.x += effect.userData.velocityX * delta;
         effect.position.y += (effect.userData.velocityY || 0) * delta;
         effect.position.z += (effect.userData.velocityZ || 0) * delta;
-        
+
         // Aplicar gravedad a partículas
         if (effect.userData.velocityY !== undefined) {
           effect.userData.velocityY -= 20 * delta;
         }
       } else {
         // Comportamiento antiguo (escalar)
-        effect.scale.multiplyScalar(1 + (effect.userData.scaleSpeed || 0) * delta);
+        effect.scale.multiplyScalar(
+          1 + (effect.userData.scaleSpeed || 0) * delta
+        );
       }
 
       // Desvanecer
@@ -1534,46 +1536,87 @@ export class MainScene {
         this.isSpeedBoostActive = false;
       }
 
-      // Generar estela de velocidad - Líneas azules hacia atrás (túnel de viento)
-      const trailChance = this.isMobile ? 0.2 : 0.4;
-      if (Math.random() < trailChance && this.trailParticles.length < 20) {
-        // Reutilizar geometría compartida - Caja alargada en Z
-        if (!this.trailGeometry) {
-          this.trailGeometry = new THREE.BoxGeometry(0.15, 0.15, 6 + Math.random() * 4);
+      // Generar estela de velocidad - Líneas blancas delicadas + círculos
+      const trailChance = this.isMobile ? 0.15 : 0.3;
+      if (Math.random() < trailChance && this.trailParticles.length < 25) {
+        // Alternar entre líneas y círculos
+        const isCircle = Math.random() < 0.4;
+
+        if (isCircle) {
+          // Círculo pequeño que se queda atrás
+          const circleGeom = new THREE.CircleGeometry(
+            0.3 + Math.random() * 0.3,
+            8
+          );
+          const circleMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.3 + Math.random() * 0.2,
+            side: THREE.DoubleSide,
+          });
+          const circle = new THREE.Mesh(circleGeom, circleMat);
+
+          this.tempVector.set(
+            (Math.random() - 0.5) * 2.5,
+            (Math.random() - 0.5) * 1.5,
+            -1.5
+          );
+          this.tempVector.applyEuler(this.pigeon.rotation);
+          circle.position.copy(this.pigeon.position).add(this.tempVector);
+          circle.rotation.copy(this.pigeon.rotation);
+          circle.userData.isCircle = true;
+
+          this.scene.add(circle);
+          this.trailParticles.push(circle);
+        } else {
+          // Línea delicada blanca
+          if (!this.trailGeometry) {
+            this.trailGeometry = new THREE.BoxGeometry(
+              0.08,
+              0.08,
+              5 + Math.random() * 3
+            );
+          }
+
+          const trailMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.25 + Math.random() * 0.15,
+          });
+          const trail = new THREE.Mesh(this.trailGeometry, trailMat);
+
+          this.tempVector.set(
+            (Math.random() - 0.5) * 2.5,
+            (Math.random() - 0.5) * 1.5,
+            -2
+          );
+          this.tempVector.applyEuler(this.pigeon.rotation);
+          trail.position.copy(this.pigeon.position).add(this.tempVector);
+          trail.rotation.copy(this.pigeon.rotation);
+
+          this.scene.add(trail);
+          this.trailParticles.push(trail);
         }
-        
-        const trailMat = new THREE.MeshBasicMaterial({
-          color: 0x66ccff, // Azul claro
-          transparent: true,
-          opacity: 0.5 + Math.random() * 0.3,
-        });
-        const trail = new THREE.Mesh(this.trailGeometry, trailMat);
-
-        // Posición detrás de la paloma con dispersión
-        this.tempVector.set(
-          (Math.random() - 0.5) * 3,
-          (Math.random() - 0.5) * 2,
-          -2
-        );
-        this.tempVector.applyEuler(this.pigeon.rotation);
-        trail.position.copy(this.pigeon.position).add(this.tempVector);
-        trail.rotation.copy(this.pigeon.rotation);
-
-        this.scene.add(trail);
-        this.trailParticles.push(trail);
       }
     }
 
-    // Actualizar partículas de estela - Efecto túnel de viento
+    // Actualizar partículas de estela - Líneas y círculos
     for (let i = this.trailParticles.length - 1; i >= 0; i--) {
       const p = this.trailParticles[i];
 
-      // Mover hacia atrás siguiendo la rotación
-      this.tempVector.set(0, 0, 1).applyEuler(p.rotation).multiplyScalar(delta * 8);
-      p.position.sub(this.tempVector);
+      // Los círculos solo se desvanecen, las líneas se mueven
+      if (!p.userData.isCircle) {
+        this.tempVector
+          .set(0, 0, 1)
+          .applyEuler(p.rotation)
+          .multiplyScalar(delta * 6);
+        p.position.sub(this.tempVector);
+      }
 
       // Desvanecer
       if (p.material instanceof THREE.Material) {
+        const fadeSpeed = p.userData.isCircle ? 2.5 : 1.8;
+        p.material.opacity -= delta * fadeSpeed;
         p.material.opacity -= delta * 1.5;
         if (p.material.opacity <= 0) {
           this.scene.remove(p);
