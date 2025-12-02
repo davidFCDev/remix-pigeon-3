@@ -49,7 +49,9 @@ export class MainScene {
   // Sistema de Power-ups (Aros)
   private powerUps: THREE.Mesh[] = [];
   private powerUpGeometry!: THREE.TorusGeometry;
-  private powerUpMaterial!: THREE.MeshToonMaterial;
+  private powerUpInnerGeometry!: THREE.TorusGeometry;
+  private powerUpMaterial!: THREE.MeshBasicMaterial;
+  private powerUpInnerMaterial!: THREE.MeshBasicMaterial;
   private ringEffects: THREE.Mesh[] = []; // Efectos visuales de aros
   private particles: THREE.Mesh[] = []; // Partículas para efectos (Donuts)
 
@@ -337,17 +339,17 @@ export class MainScene {
   }
 
   /**
-   * Inicializa los Power-ups (Aros amarillos para velocidad)
+   * Inicializa los Power-ups (Aros elegantes para velocidad)
    */
   private initPowerUps(): void {
-    // Geometría circular
-    this.powerUpGeometry = new THREE.TorusGeometry(4, 0.5, 16, 32);
+    // Geometría circular - más fino y elegante
+    this.powerUpGeometry = new THREE.TorusGeometry(4, 0.15, 16, 48);
 
-    // Material para los aros (Amarillo brillante)
-    this.powerUpMaterial = new THREE.MeshToonMaterial({
-      color: 0xffff00,
-      emissive: 0xaa6600,
-      emissiveIntensity: 0.8,
+    // Material para los aros (Blanco con brillo suave)
+    this.powerUpMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.9,
     });
 
     // Generar 15 Power-ups dispersos
@@ -581,26 +583,58 @@ export class MainScene {
   }
 
   /**
-   * Crea un nuevo Power-up (Aro) en la posición dada
+   * Crea un nuevo Power-up (Aro doble elegante) en la posición dada
    */
   private spawnPowerUp(position: THREE.Vector3): void {
-    const powerUp = new THREE.Mesh(this.powerUpGeometry, this.powerUpMaterial);
-    powerUp.position.copy(position);
-    powerUp.castShadow = true;
+    // Grupo contenedor para el aro doble
+    const powerUpGroup = new THREE.Group() as THREE.Group & THREE.Mesh;
+    powerUpGroup.position.copy(position);
 
-    // Apuntar siempre al centro del mapa (0, Y, 0)
-    powerUp.lookAt(0, position.y, 0);
+    // Aro principal (exterior)
+    const mainRing = new THREE.Mesh(this.powerUpGeometry, this.powerUpMaterial);
+    powerUpGroup.add(mainRing);
+
+    // Aro interior (más pequeño, rotado)
+    const innerGeom = new THREE.TorusGeometry(2.8, 0.1, 16, 48);
+    const innerMat = new THREE.MeshBasicMaterial({
+      color: 0xaaddff,
+      transparent: true,
+      opacity: 0.7,
+    });
+    const innerRing = new THREE.Mesh(innerGeom, innerMat);
+    innerRing.rotation.x = Math.PI / 6; // Ligeramente inclinado
+    powerUpGroup.add(innerRing);
+
+    // Pequeñas partículas flotando alrededor
+    for (let i = 0; i < 6; i++) {
+      const particleGeom = new THREE.SphereGeometry(0.15, 8, 8);
+      const particleMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.6,
+      });
+      const particle = new THREE.Mesh(particleGeom, particleMat);
+      const angle = (i / 6) * Math.PI * 2;
+      particle.position.set(Math.cos(angle) * 5, 0, Math.sin(angle) * 5);
+      particle.userData.orbitAngle = angle;
+      particle.userData.orbitSpeed = 1 + Math.random() * 0.5;
+      powerUpGroup.add(particle);
+    }
+
+    // Apuntar siempre al centro del mapa
+    powerUpGroup.lookAt(0, position.y, 0);
 
     // Animación flotante (userData)
-    powerUp.userData = {
+    powerUpGroup.userData = {
       initialY: position.y,
       floatSpeed: 1.0 + Math.random(),
       floatOffset: Math.random() * Math.PI * 2,
-      rotationSpeed: 0, // Ya no rotan sobre sí mismos para mantener la orientación al centro
+      rotationSpeed: 0.5, // Rotación suave del aro interior
+      innerRing: innerRing,
     };
 
-    this.scene.add(powerUp);
-    this.powerUps.push(powerUp);
+    this.scene.add(powerUpGroup);
+    this.powerUps.push(powerUpGroup as unknown as THREE.Mesh);
   }
 
   /**
@@ -828,7 +862,7 @@ export class MainScene {
     const textElement = document.createElement("div");
     textElement.className = "floating-text";
     textElement.textContent = text;
-    
+
     // Añadir variación horizontal aleatoria para que no se superpongan
     const randomOffset = (Math.random() - 0.5) * 60;
     textElement.style.left = `calc(50% + ${randomOffset}px)`;
@@ -1487,48 +1521,62 @@ export class MainScene {
         this.isSpeedBoostActive = false;
       }
 
-      // Generar estela de velocidad - Reducida frecuencia en móviles
-      const trailChance = this.isMobile ? 0.2 : 0.4;
-      if (Math.random() < trailChance && this.trailParticles.length < 20) {
-        // Reutilizar geometría compartida
+      // Generar estela de partículas suaves - Reducida frecuencia en móviles
+      const trailChance = this.isMobile ? 0.3 : 0.6;
+      if (Math.random() < trailChance && this.trailParticles.length < 30) {
+        // Geometría esférica suave
         if (!this.trailGeometry) {
-          this.trailGeometry = new THREE.BoxGeometry(0.2, 0.2, 8);
+          this.trailGeometry = new THREE.SphereGeometry(0.3, 8, 8) as unknown as THREE.BoxGeometry;
         }
+        
+        // Color suave blanco/celeste
+        const colors = [0xffffff, 0xe0f0ff, 0xd0e8ff];
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        
         const trailMat = new THREE.MeshBasicMaterial({
-          color: 0x00ffff,
+          color: color,
           transparent: true,
-          opacity: 0.6,
+          opacity: 0.4 + Math.random() * 0.2,
         });
         const trail = new THREE.Mesh(this.trailGeometry, trailMat);
 
+        // Posición más dispersa y orgánica
         this.tempVector.set(
-          (Math.random() - 0.5) * 6,
-          (Math.random() - 0.5) * 6,
-          -2
+          (Math.random() - 0.5) * 4,
+          (Math.random() - 0.5) * 3,
+          -1 - Math.random() * 2
         );
         this.tempVector.applyEuler(this.pigeon.rotation);
         trail.position.copy(this.pigeon.position).add(this.tempVector);
-        trail.rotation.copy(this.pigeon.rotation);
+        
+        // Tamaño variable
+        const scale = 0.5 + Math.random() * 0.8;
+        trail.scale.set(scale, scale, scale);
+        
+        // Velocidad de desvanecimiento variable
+        trail.userData.fadeSpeed = 1.5 + Math.random();
 
         this.scene.add(trail);
         this.trailParticles.push(trail);
       }
     }
 
-    // Actualizar partículas de estela - Optimizado
+    // Actualizar partículas de estela - Efecto suave flotante
     for (let i = this.trailParticles.length - 1; i >= 0; i--) {
       const p = this.trailParticles[i];
-      this.tempVector2
-        .set(0, 0, 1)
-        .applyEuler(p.rotation)
-        .multiplyScalar(delta * 5);
-      p.position.sub(this.tempVector2);
+      
+      // Movimiento suave hacia arriba y atrás
+      p.position.y += delta * 2;
+      p.position.z -= delta * 3;
+      
+      // Encoger suavemente
+      p.scale.multiplyScalar(0.97);
 
       if (p.material instanceof THREE.Material) {
-        p.material.opacity -= delta * 2.0;
-        if (p.material.opacity <= 0) {
+        const fadeSpeed = p.userData.fadeSpeed || 2.0;
+        p.material.opacity -= delta * fadeSpeed;
+        if (p.material.opacity <= 0 || p.scale.x < 0.1) {
           this.scene.remove(p);
-          // No disposear geometry compartida
           p.material.dispose();
           this.trailParticles.splice(i, 1);
         }
