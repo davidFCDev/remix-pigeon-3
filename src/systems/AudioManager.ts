@@ -5,6 +5,7 @@ export class AudioManager {
   private currentTrackIndex: number = 0;
   private musicPlayer: HTMLAudioElement;
   private isMusicPlaying: boolean = false;
+  private isMuted: boolean = false;
 
   constructor() {
     // SFX - Sonido de "Ding" al coger donut
@@ -79,5 +80,15 @@ export class AudioManager {
     // Avanzar índice para la próxima
     this.currentTrackIndex =
       (this.currentTrackIndex + 1) % this.musicTracks.length;
+  }
+
+  /**
+   * Silencia o activa todo el audio
+   */
+  public setMuted(muted: boolean): void {
+    this.isMuted = muted;
+    this.collectSound.muted = muted;
+    this.powerUpSound.muted = muted;
+    this.musicPlayer.muted = muted;
   }
 }

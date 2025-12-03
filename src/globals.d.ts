@@ -13,13 +13,13 @@ declare global {
   interface Window {
     FarcadeSDK?: FarcadeSDKType;
   }
-}
 
-// Vite HMR types
-interface ImportMeta {
-  hot?: {
-    dispose: (callback: () => void) => void;
-  };
+  // Vite HMR types
+  interface ImportMeta {
+    hot?: {
+      dispose: (callback: () => void) => void;
+    };
+  }
 }
 
 export {};

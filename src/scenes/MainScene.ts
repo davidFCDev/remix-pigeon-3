@@ -154,6 +154,7 @@ export class MainScene {
   private isTurningLeft: boolean = false;
   private isTurningRight: boolean = false;
   private currentTurnSpeed: number = 0; // Para suavizar el giro en móvil
+  private keyboardTurnSpeed: number = 0; // Para suavizar el giro de teclado
 
   // Optimización: Detectar móvil una sola vez
   private isMobile: boolean = false;
@@ -252,8 +253,32 @@ export class MainScene {
       scoreContainer.style.display = "flex";
     }
 
+    // Inicializar SDK de Farcade
+    this.initFarcadeSDK();
+
     // Iniciar loop de animación
     this.animate();
+  }
+
+  /**
+   * Inicializa el SDK de Farcade y configura los event listeners
+   */
+  private initFarcadeSDK(): void {
+    if (window.FarcadeSDK) {
+      // Indicar que el juego está listo
+      window.FarcadeSDK.singlePlayer.actions.ready();
+
+      // Manejar play again
+      window.FarcadeSDK.on("play_again", () => {
+        location.reload();
+      });
+
+      // Manejar mute/unmute
+      window.FarcadeSDK.on("toggle_mute", (data) => {
+        const muteData = data as { isMuted: boolean };
+        this.audioManager.setMuted(muteData.isMuted);
+      });
+    }
   }
 
   /**
@@ -723,6 +748,11 @@ export class MainScene {
     // Reproducir sonido de donut (igual que el normal)
     this.audioManager.playCollectSound();
 
+    // Haptic feedback
+    if (window.FarcadeSDK) {
+      window.FarcadeSDK.singlePlayer.actions.hapticFeedback();
+    }
+
     // Efecto visual: Explosión dorada
     this.createGoldenExplosion(collectedDonut.position);
 
@@ -970,6 +1000,11 @@ export class MainScene {
     // Reproducir sonido
     this.audioManager.playPowerUpSound();
 
+    // Haptic feedback
+    if (window.FarcadeSDK) {
+      window.FarcadeSDK.singlePlayer.actions.hapticFeedback();
+    }
+
     // Eliminar (sin efecto visual, el efecto es la estela de viento)
     this.scene.remove(collectedPowerUp);
     this.powerUps.splice(index, 1);
@@ -990,6 +1025,11 @@ export class MainScene {
     // Reproducir sonido
     this.audioManager.playCollectSound();
 
+    // Haptic feedback
+    if (window.FarcadeSDK) {
+      window.FarcadeSDK.singlePlayer.actions.hapticFeedback();
+    }
+
     // Efecto visual: Explosión de partículas rosa suave
     this.createDonutExplosion(collectedDonut.position);
 
@@ -1004,8 +1044,8 @@ export class MainScene {
       this.scoreElement.innerText = this.score.toString();
     }
 
-    // Activar modo difícil al llegar a 5 puntos (DEV: cambiar a 50 en producción)
-    if (this.score >= 5 && !this.hardModeActivated) {
+    // Activar modo difícil al llegar a 40 puntos
+    if (this.score >= 40 && !this.hardModeActivated) {
       this.activateHardMode();
     }
 
@@ -1674,12 +1714,38 @@ export class MainScene {
     turnSpeed += this.targetMousePosition.x * 2.0; // Factor de velocidad
     this.targetMousePosition.x = 0; // Reset
 
-    // Teclado
+    // Teclado - Giro progresivo (aceleración suave)
+    const maxKeyboardTurnSpeed = this.pigeonRotationSpeed * delta;
+    const keyboardAcceleration = delta * 4; // Velocidad de aceleración
+    const keyboardDeceleration = delta * 6; // Velocidad de deceleración (más rápida)
+
     if (this.keys["KeyA"] || this.keys["ArrowLeft"]) {
-      turnSpeed += this.pigeonRotationSpeed * delta;
+      // Acelerar progresivamente hacia la izquierda
+      this.keyboardTurnSpeed = Math.min(
+        this.keyboardTurnSpeed + keyboardAcceleration,
+        maxKeyboardTurnSpeed
+      );
     } else if (this.keys["KeyD"] || this.keys["ArrowRight"]) {
-      turnSpeed -= this.pigeonRotationSpeed * delta;
+      // Acelerar progresivamente hacia la derecha
+      this.keyboardTurnSpeed = Math.max(
+        this.keyboardTurnSpeed - keyboardAcceleration,
+        -maxKeyboardTurnSpeed
+      );
+    } else {
+      // Decelerar suavemente hacia 0 cuando no hay input
+      if (this.keyboardTurnSpeed > 0) {
+        this.keyboardTurnSpeed = Math.max(
+          0,
+          this.keyboardTurnSpeed - keyboardDeceleration
+        );
+      } else if (this.keyboardTurnSpeed < 0) {
+        this.keyboardTurnSpeed = Math.min(
+          0,
+          this.keyboardTurnSpeed + keyboardDeceleration
+        );
+      }
     }
+    turnSpeed += this.keyboardTurnSpeed;
 
     // Móvil (Hold Left/Right) - Giro progresivo
     let targetTurnSpeed = 0;
@@ -2197,10 +2263,11 @@ export class MainScene {
 
   private gameOver(): void {
     this.isGameOver = true;
-    alert(
-      `¡Juego Terminado! Tu paloma tiene demasiada hambre.\nPuntuación final: ${this.score}`
-    );
-    location.reload();
+
+    // Llamar al SDK de Farcade con el score final
+    if (window.FarcadeSDK) {
+      window.FarcadeSDK.singlePlayer.actions.gameOver({ score: this.score });
+    }
   }
 
   /**

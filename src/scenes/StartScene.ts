@@ -5,9 +5,44 @@
 export class StartScene {
   private overlay: HTMLElement | null = null;
   private onStart: () => void;
+  private hasSeenInstructions: boolean = false;
 
   constructor(onStart: () => void) {
     this.onStart = onStart;
+    this.loadGameState();
+  }
+
+  /**
+   * Carga el estado del juego desde el SDK o localStorage
+   */
+  private loadGameState(): void {
+    // Intentar cargar desde localStorage como fallback
+    const savedState = localStorage.getItem("birdgame_state");
+    if (savedState) {
+      try {
+        const state = JSON.parse(savedState);
+        this.hasSeenInstructions = state.hasSeenInstructions || false;
+      } catch (e) {
+        this.hasSeenInstructions = false;
+      }
+    }
+  }
+
+  /**
+   * Guarda el estado del juego usando el SDK y localStorage
+   */
+  private saveGameState(): void {
+    const gameState = {
+      hasSeenInstructions: true,
+    };
+
+    // Guardar en localStorage como fallback
+    localStorage.setItem("birdgame_state", JSON.stringify(gameState));
+
+    // Guardar usando el SDK si está disponible
+    if (window.FarcadeSDK?.singlePlayer?.actions?.saveGameState) {
+      window.FarcadeSDK.singlePlayer.actions.saveGameState({ gameState });
+    }
   }
 
   public show(): void {
@@ -188,7 +223,14 @@ export class StartScene {
     };
 
     startButton.onclick = () => {
-      this.showInstructionsModal();
+      if (this.hasSeenInstructions) {
+        // Ya ha visto las instrucciones, ir directamente al juego
+        this.hide();
+        this.onStart();
+      } else {
+        // Primera vez, mostrar instrucciones
+        this.showInstructionsModal();
+      }
     };
 
     // Contenedor para centrar el botón verticalmente en el espacio restante
@@ -379,6 +421,9 @@ export class StartScene {
     };
 
     goButton.onclick = () => {
+      // Guardar que el usuario ya vio las instrucciones
+      this.saveGameState();
+
       modalOverlay.remove();
       this.hide();
       this.onStart();
