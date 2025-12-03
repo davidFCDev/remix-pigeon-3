@@ -33,7 +33,7 @@ export class MainScene {
   // Sistema de Hambre
   private maxHunger: number = 100;
   private currentHunger: number = 100;
-  private hungerDepletionRate: number = 3.0; // Puntos por segundo (Reducido para que dure más)
+  private hungerDepletionRate: number = 4.0; // Puntos por segundo (aumentado)
   private hungerBarElement: HTMLElement | null = null;
   private isGameOver: boolean = false;
 
@@ -45,6 +45,8 @@ export class MainScene {
   }[] = [];
   private flamingoModel: THREE.Group | null = null;
   private flamingoMixers: THREE.AnimationMixer[] = [];
+  private flamingoBaseSpeed: number = 15.0; // Velocidad base de los flamingos
+  private flamingoSpeedMultiplier: number = 1.0; // Multiplicador que aumenta con el tiempo
 
   // Sistema de Power-ups (Aros)
   private powerUps: THREE.Mesh[] = [];
@@ -74,11 +76,19 @@ export class MainScene {
   private boostSpeed: number = 80.0; // Ultravelocidad
   private trailParticles: THREE.Mesh[] = [];
 
-  // Sistema de Nubes (Ralentizan al jugador)
+  // Sistema de Nubes (decorativas)
   private clouds: THREE.Group[] = [];
   private cloudGeometry!: THREE.SphereGeometry;
-  private isInCloud: boolean = false;
-  private cloudSlowSpeed: number = 12.0; // Velocidad reducida en nubes
+
+  // Sistema de Remolinos (atraen y ralentizan)
+  private whirlpools: THREE.Group[] = [];
+  private whirlpoolRadius: number = 80; // Radio de atracción
+  private whirlpoolPullStrength: number = 8; // Fuerza de atracción (reducida para poder escapar)
+  private whirlpoolSlowSpeed: number = 12; // Velocidad reducida en remolino
+  private isInWhirlpool: boolean = false;
+  private whirlpoolRepositionTimer: number = 0; // Timer para reposicionar
+  private whirlpoolRepositionInterval: number = 15; // Segundos entre reposiciones
+  private hardModeActivated: boolean = false; // Se activa al llegar a 50 puntos
 
   // Sistema de textos flotantes (feedback visual - HTML)
   private floatingTextsContainer: HTMLElement | null = null;
@@ -232,10 +242,15 @@ export class MainScene {
 
     // Obtener referencia al elemento de puntuación
     this.scoreElement = document.getElementById("score-value");
-    // if (this.scoreElement) this.scoreElement.style.display = "none"; // Mostrar score
 
     // Obtener referencia a la barra de hambre
     this.hungerBarElement = document.getElementById("hunger-bar");
+
+    // Mostrar el contenedor de score/hambre cuando empieza la partida
+    const scoreContainer = document.getElementById("score-container");
+    if (scoreContainer) {
+      scoreContainer.style.display = "flex";
+    }
 
     // Iniciar loop de animación
     this.animate();
@@ -268,6 +283,133 @@ export class MainScene {
     this.initGoldenDonuts();
     this.initFlamingos();
     this.initClouds();
+    this.initWhirlpools();
+  }
+
+  /**
+   * Inicializa los Remolinos (zonas de atracción y ralentización)
+   * Distribuidos en cuadrantes diferentes a las nubes
+   */
+  private initWhirlpools(): void {
+    // Posiciones de los remolinos bien distribuidas por el mapa
+    // Evitando las posiciones de las nubes (que están en otros cuadrantes)
+    // Nubes: (-180,-130), (160,-180), (-130,160), (180,130), (0,-220)
+    // Remolinos en zonas opuestas/diferentes:
+    const positions = [
+      { x: 250, z: 0 }, // Este (lejos de nubes)
+      { x: -250, z: 50 }, // Oeste
+      { x: 50, z: 250 }, // Norte
+      { x: -50, z: -50 }, // Centro-sur (entre nubes)
+    ];
+
+    for (const pos of positions) {
+      this.createWhirlpool(pos.x, pos.z);
+    }
+  }
+
+  /**
+   * Crea un remolino visual en la posición dada
+   */
+  private createWhirlpool(x: number, z: number): void {
+    const whirlpoolGroup = new THREE.Group();
+    whirlpoolGroup.position.set(x, 20, z);
+
+    // Material semi-transparente con tono azul/cyan
+    const whirlMaterial = new THREE.MeshBasicMaterial({
+      color: 0x66ddff,
+      transparent: true,
+      opacity: 0.3,
+      side: THREE.DoubleSide,
+    });
+
+    // Crear anillos concéntricos que giran a diferentes velocidades
+    const ringCount = 4;
+    for (let i = 0; i < ringCount; i++) {
+      const innerRadius = 8 + i * 12;
+      const outerRadius = innerRadius + 8;
+      const ringGeom = new THREE.RingGeometry(innerRadius, outerRadius, 32);
+      const ring = new THREE.Mesh(ringGeom, whirlMaterial.clone());
+      ring.rotation.x = -Math.PI / 2; // Horizontal
+      ring.position.y = i * 2 - 3; // Escalonados en altura
+      ring.userData = {
+        rotationSpeed: 1.5 + i * 0.5, // Anillos exteriores giran más rápido
+        baseOpacity: 0.25 - i * 0.04,
+      };
+      (ring.material as THREE.MeshBasicMaterial).opacity =
+        ring.userData.baseOpacity;
+      whirlpoolGroup.add(ring);
+    }
+
+    // Partículas flotantes en espiral
+    const particleMaterial = new THREE.MeshBasicMaterial({
+      color: 0xaaeeff,
+      transparent: true,
+      opacity: 0.6,
+    });
+    const particleGeom = new THREE.SphereGeometry(0.5, 6, 6);
+
+    for (let i = 0; i < 12; i++) {
+      const particle = new THREE.Mesh(particleGeom, particleMaterial.clone());
+      const angle = (i / 12) * Math.PI * 2;
+      const radius = 10 + Math.random() * 25;
+      particle.position.set(
+        Math.cos(angle) * radius,
+        Math.random() * 8 - 4,
+        Math.sin(angle) * radius
+      );
+      particle.userData = {
+        angle: angle,
+        radius: radius,
+        speed: 2 + Math.random(),
+        ySpeed: 1 + Math.random() * 2,
+        initialY: particle.position.y,
+      };
+      whirlpoolGroup.add(particle);
+    }
+
+    // Guardar datos del remolino
+    whirlpoolGroup.userData = {
+      radius: this.whirlpoolRadius,
+    };
+
+    this.scene.add(whirlpoolGroup);
+    this.whirlpools.push(whirlpoolGroup);
+  }
+
+  /**
+   * Reposiciona un remolino aleatorio a una nueva ubicación
+   */
+  private repositionRandomWhirlpool(): void {
+    if (this.whirlpools.length === 0) return;
+
+    // Elegir un remolino aleatorio
+    const index = Math.floor(Math.random() * this.whirlpools.length);
+    const whirlpool = this.whirlpools[index];
+
+    // Nueva posición aleatoria (evitando el centro y los bordes)
+    const edgeBuffer = 100;
+    const minX = this.mapBounds.minX + edgeBuffer;
+    const maxX = this.mapBounds.maxX - edgeBuffer;
+    const minZ = this.mapBounds.minZ + edgeBuffer;
+    const maxZ = this.mapBounds.maxZ - edgeBuffer;
+
+    // Evitar aparecer muy cerca de la paloma
+    let newX, newZ;
+    let attempts = 0;
+    do {
+      newX = minX + Math.random() * (maxX - minX);
+      newZ = minZ + Math.random() * (maxZ - minZ);
+      attempts++;
+    } while (
+      Math.sqrt(
+        Math.pow(newX - this.pigeon.position.x, 2) +
+          Math.pow(newZ - this.pigeon.position.z, 2)
+      ) < 100 &&
+      attempts < 10
+    );
+
+    // Mover el remolino a la nueva posición
+    whirlpool.position.set(newX, 20, newZ);
   }
 
   /**
@@ -329,7 +471,7 @@ export class MainScene {
   }
 
   /**
-   * Crea una nube con forma definida y natural (estilo cúmulo)
+   * Crea una nube con esferas aleatorias de distintos tamaños (cada nube es única)
    */
   private createCloud(x: number, z: number): void {
     const cloudGroup = new THREE.Group();
@@ -338,70 +480,52 @@ export class MainScene {
     const baseY = 20;
     cloudGroup.position.set(x, baseY, z);
 
-    // Material principal - más opaco para mejor definición
+    // Material principal
     const cloudMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
       opacity: 0.5,
     });
 
-    // Material para sombras sutiles (parte inferior)
-    const shadowMaterial = new THREE.MeshBasicMaterial({
-      color: 0xe8e8e8,
-      transparent: true,
-      opacity: 0.45,
-    });
+    // === GENERACIÓN ALEATORIA DE ESFERAS ===
+    // Cada nube tiene entre 8 y 14 esferas de tamaños aleatorios
+    const numSpheres = 8 + Math.floor(Math.random() * 7);
 
-    // === FORMA DE NUBE CÚMULO ===
-    
-    // Cuerpo central grande
-    const core = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
-    core.scale.set(22, 12, 20);
-    core.position.set(0, 2, 0);
-    cloudGroup.add(core);
+    // Tamaño base aleatorio para esta nube (hace cada nube diferente)
+    const cloudScale = 0.7 + Math.random() * 0.6; // 0.7 a 1.3
 
-    // Cúpula principal (la más alta, centro)
-    const mainDome = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
-    mainDome.scale.set(16, 14, 15);
-    mainDome.position.set(2, 10, 0);
-    cloudGroup.add(mainDome);
-
-    // Cúpulas secundarias (los "bultos" característicos)
-    const secondaryDomes = [
-      { x: -12, y: 6, z: 2, sx: 14, sy: 11, sz: 13 },
-      { x: 10, y: 7, z: -4, sx: 13, sy: 10, sz: 12 },
-      { x: -4, y: 8, z: 10, sx: 12, sy: 9, sz: 11 },
-      { x: 6, y: 5, z: 8, sx: 11, sy: 8, sz: 10 },
-    ];
-
-    for (const dome of secondaryDomes) {
+    for (let i = 0; i < numSpheres; i++) {
       const sphere = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
-      sphere.scale.set(dome.sx, dome.sy, dome.sz);
-      sphere.position.set(dome.x, dome.y, dome.z);
+
+      // Tamaño aleatorio para cada esfera (muy variado)
+      const size = (4 + Math.random() * 12) * cloudScale;
+      const sizeY = size * (0.5 + Math.random() * 0.5); // Altura variable
+      sphere.scale.set(size, sizeY, size * (0.8 + Math.random() * 0.4));
+
+      // Posición aleatoria dentro de un área de la nube
+      const spreadX = 25 * cloudScale;
+      const spreadZ = 20 * cloudScale;
+      const px = (Math.random() - 0.5) * spreadX;
+      const py = (Math.random() - 0.3) * 10 * cloudScale; // Más concentrado abajo
+      const pz = (Math.random() - 0.5) * spreadZ;
+      sphere.position.set(px, py, pz);
+
       cloudGroup.add(sphere);
     }
 
-    // Bultos pequeños para textura (bordes esponjosos)
-    const puffs = [
-      { x: -18, y: 3, z: 0, s: 8 },
-      { x: 16, y: 2, z: 3, s: 7 },
-      { x: -8, y: 4, z: -12, s: 9 },
-      { x: 12, y: 3, z: -10, s: 7 },
-      { x: 0, y: 2, z: 14, s: 8 },
-    ];
-
-    for (const puff of puffs) {
+    // Añadir 2-4 esferas más grandes en el centro para dar volumen
+    const numCoreSpheres = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < numCoreSpheres; i++) {
       const sphere = new THREE.Mesh(this.cloudGeometry, cloudMaterial);
-      sphere.scale.set(puff.s, puff.s * 0.7, puff.s);
-      sphere.position.set(puff.x, puff.y, puff.z);
+      const size = (10 + Math.random() * 8) * cloudScale;
+      sphere.scale.set(size, size * 0.6, size * 0.9);
+      sphere.position.set(
+        (Math.random() - 0.5) * 8,
+        Math.random() * 4,
+        (Math.random() - 0.5) * 8
+      );
       cloudGroup.add(sphere);
     }
-
-    // Base inferior (sombra sutil - más plana)
-    const bottom = new THREE.Mesh(this.cloudGeometry, shadowMaterial);
-    bottom.scale.set(28, 4, 24);
-    bottom.position.set(0, -3, 0);
-    cloudGroup.add(bottom);
 
     // Radio de colisión
     cloudGroup.userData = {
@@ -596,8 +720,8 @@ export class MainScene {
   private collectGoldenDonut(index: number): void {
     const collectedDonut = this.goldenDonuts[index];
 
-    // Reproducir sonido (especial)
-    this.audioManager.playPowerUpSound();
+    // Reproducir sonido de donut (igual que el normal)
+    this.audioManager.playCollectSound();
 
     // Efecto visual: Explosión dorada
     this.createGoldenExplosion(collectedDonut.position);
@@ -620,8 +744,8 @@ export class MainScene {
       this.createFloatingText("+5");
     }
 
-    // Restaurar MUCHA hambre
-    this.currentHunger = Math.min(this.maxHunger, this.currentHunger + 40);
+    // Restaurar hambre (menos que antes para equilibrar)
+    this.currentHunger = Math.min(this.maxHunger, this.currentHunger + 25);
 
     // Reponer Donut Dorado
     this.spawnRandomGoldenDonut();
@@ -666,14 +790,19 @@ export class MainScene {
 
   /**
    * Genera una posición aleatoria dentro de los límites del mapa
+   * Con buffer desde los bordes para evitar spawns en los límites
    */
   private generateRandomPosition(): THREE.Vector3 {
-    // Usamos un 96% del mapa para distribuir mejor los objetos y evitar acumulaciones
-    const rangeX = (this.mapBounds.maxX - this.mapBounds.minX) * 0.48;
-    const rangeZ = (this.mapBounds.maxZ - this.mapBounds.minZ) * 0.48;
+    // Buffer desde los bordes (50 unidades de margen)
+    const edgeBuffer = 50;
+    const minX = this.mapBounds.minX + edgeBuffer;
+    const maxX = this.mapBounds.maxX - edgeBuffer;
+    const minZ = this.mapBounds.minZ + edgeBuffer;
+    const maxZ = this.mapBounds.maxZ - edgeBuffer;
 
-    const x = (Math.random() - 0.5) * 2 * rangeX;
-    const z = (Math.random() - 0.5) * 2 * rangeZ;
+    // Posición completamente aleatoria dentro del área válida (incluye el centro)
+    const x = minX + Math.random() * (maxX - minX);
+    const z = minZ + Math.random() * (maxZ - minZ);
 
     // Altura FIJA para coincidir con la paloma
     const y = 20;
@@ -829,22 +958,7 @@ export class MainScene {
       }
     }
 
-    // 4. Nubes (Zonas de ralentización) - Solo comprobar distancia horizontal
-    this.isInCloud = false;
-    for (let i = 0; i < this.clouds.length; i++) {
-      const cloud = this.clouds[i];
-      const dx = this.pigeon.position.x - cloud.position.x;
-      const dz = this.pigeon.position.z - cloud.position.z;
-      const horizontalDist = Math.sqrt(dx * dx + dz * dz);
-
-      // También comprobar altura (estar dentro de la nube verticalmente)
-      const dy = Math.abs(this.pigeon.position.y - cloud.position.y);
-
-      if (horizontalDist < cloud.userData.radius && dy < 15) {
-        this.isInCloud = true;
-        break;
-      }
-    }
+    // 4. Nubes (decorativas, sin efecto de juego)
   }
 
   /**
@@ -888,6 +1002,11 @@ export class MainScene {
     this.score += points;
     if (this.scoreElement) {
       this.scoreElement.innerText = this.score.toString();
+    }
+
+    // Activar modo difícil al llegar a 5 puntos (DEV: cambiar a 50 en producción)
+    if (this.score >= 5 && !this.hardModeActivated) {
+      this.activateHardMode();
     }
 
     // Mostrar texto flotante si hay boost activo
@@ -1002,6 +1121,78 @@ export class MainScene {
     setTimeout(() => {
       textElement.remove();
     }, 1200);
+  }
+
+  /**
+   * Activa el modo difícil al llegar a 50 puntos
+   */
+  private activateHardMode(): void {
+    this.hardModeActivated = true;
+
+    // Mostrar mensaje de advertencia dramático
+    this.showHardModeWarning();
+
+    // Aumentar velocidad base de flamingos permanentemente
+    this.flamingoBaseSpeed = 20.0; // Era 15.0
+
+    // Añadir un remolino extra
+    const newX = (Math.random() - 0.5) * 400;
+    const newZ = (Math.random() - 0.5) * 400;
+    this.createWhirlpool(newX, newZ);
+  }
+
+  /**
+   * Muestra una advertencia visual cuando se activa el modo difícil
+   */
+  private showHardModeWarning(): void {
+    // Crear overlay de advertencia
+    const warning = document.createElement("div");
+    warning.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: 'Fredoka', 'Comic Sans MS', cursive;
+      font-size: 52px;
+      font-weight: bold;
+      color: #ff4444;
+      text-shadow: 
+        3px 3px 0 #000,
+        -1px -1px 0 #000,
+        1px -1px 0 #000,
+        -1px 1px 0 #000,
+        0 0 20px rgba(255, 0, 0, 0.5);
+      z-index: 10000;
+      text-align: center;
+      animation: hardModeWarn 2.5s ease-out forwards;
+      pointer-events: none;
+      letter-spacing: 4px;
+    `;
+    warning.textContent = "CHAOS MODE";
+
+    // Añadir estilos de animación si no existen
+    if (!document.getElementById("hard-mode-styles")) {
+      const style = document.createElement("style");
+      style.id = "hard-mode-styles";
+      style.textContent = `
+        @keyframes hardModeWarn {
+          0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+          20% { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
+          40% { transform: translate(-50%, -50%) scale(1.0); }
+          60% { transform: translate(-50%, -50%) scale(1.1); }
+          80% { opacity: 1; }
+          100% { opacity: 0; transform: translate(-50%, -50%) scale(1.0); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    document.body.appendChild(warning);
+
+    // Eliminar después de la animación
+    setTimeout(() => {
+      warning.remove();
+    }, 2500);
   }
 
   // Eliminado: spawnPowerUp
@@ -1516,14 +1707,14 @@ export class MainScene {
     this.pigeon.rotation.x = 0;
 
     // 2. Movimiento Constante
-    // Suavizado de velocidad (Turbo y Nubes)
+    // Suavizado de velocidad (Turbo y Remolinos)
     let targetSpeed = this.isSpeedBoostActive
       ? this.boostSpeed
       : this.baseSpeed;
 
-    // Reducir velocidad si estamos en una nube (pero no si tenemos boost)
-    if (this.isInCloud && !this.isSpeedBoostActive) {
-      targetSpeed = this.cloudSlowSpeed;
+    // Ralentizar si estamos en un remolino (pero no si tenemos boost)
+    if (this.isInWhirlpool && !this.isSpeedBoostActive) {
+      targetSpeed = this.whirlpoolSlowSpeed;
     }
 
     this.pigeonSpeed = THREE.MathUtils.lerp(
@@ -1538,6 +1729,39 @@ export class MainScene {
     const forward = new THREE.Vector3(0, 0, 1);
     forward.applyEuler(this.pigeon.rotation);
     this.pigeon.position.add(forward.multiplyScalar(moveSpeed));
+
+    // Efecto de atracción de remolinos
+    this.isInWhirlpool = false;
+    for (const whirlpool of this.whirlpools) {
+      const dx = whirlpool.position.x - this.pigeon.position.x;
+      const dz = whirlpool.position.z - this.pigeon.position.z;
+      const distance = Math.sqrt(dx * dx + dz * dz);
+
+      if (distance < this.whirlpoolRadius && distance > 5) {
+        this.isInWhirlpool = true;
+
+        // Calcular fuerza de atracción (más suave, siempre escapable)
+        // La fuerza máxima está limitada para que el jugador siempre pueda salir
+        const pullFactor = Math.min(0.6, 1 - distance / this.whirlpoolRadius);
+        const pullStrength = this.whirlpoolPullStrength * pullFactor * delta;
+
+        // Si tenemos boost, resistimos mucho mejor la atracción
+        const resistanceFactor = this.isSpeedBoostActive ? 0.1 : 1.0;
+
+        // Atraer hacia el centro del remolino (pero con límite)
+        const dirX = dx / distance;
+        const dirZ = dz / distance;
+        const maxPull = moveSpeed * 0.7; // Nunca atraer más del 70% del movimiento
+        const actualPullX =
+          Math.min(Math.abs(dirX * pullStrength * resistanceFactor), maxPull) *
+          Math.sign(dirX);
+        const actualPullZ =
+          Math.min(Math.abs(dirZ * pullStrength * resistanceFactor), maxPull) *
+          Math.sign(dirZ);
+        this.pigeon.position.x += actualPullX;
+        this.pigeon.position.z += actualPullZ;
+      }
+    }
 
     // 3. Altura Fija (Sin Lerp para evitar vibraciones)
     this.pigeon.position.y = FIXED_HEIGHT;
@@ -1623,6 +1847,32 @@ export class MainScene {
           ) *
             2;
       }
+    }
+
+    // Animar remolinos (rotación y partículas)
+    for (const whirlpool of this.whirlpools) {
+      whirlpool.children.forEach((child) => {
+        if (child.userData.rotationSpeed) {
+          // Anillos girando
+          child.rotation.z += child.userData.rotationSpeed * delta;
+        } else if (child.userData.angle !== undefined) {
+          // Partículas en espiral
+          child.userData.angle += child.userData.speed * delta;
+          const radius = child.userData.radius;
+          child.position.x = Math.cos(child.userData.angle) * radius;
+          child.position.z = Math.sin(child.userData.angle) * radius;
+          child.position.y =
+            child.userData.initialY +
+            Math.sin(this.cachedElapsedTime * child.userData.ySpeed) * 3;
+        }
+      });
+    }
+
+    // Reposicionar remolinos periódicamente
+    this.whirlpoolRepositionTimer += delta;
+    if (this.whirlpoolRepositionTimer >= this.whirlpoolRepositionInterval) {
+      this.whirlpoolRepositionTimer = 0;
+      this.repositionRandomWhirlpool();
     }
 
     // Rotar los Power-ups y animar líneas de viento
@@ -1806,7 +2056,18 @@ export class MainScene {
     // Actualizar animaciones
     this.flamingoMixers.forEach((mixer) => mixer.update(delta));
 
+    // Aumentar dificultad con el tiempo y score
+    // Cada 30 segundos o cada 20 puntos, los flamingos se vuelven más rápidos
+    const timeBonus = Math.floor(this.cachedElapsedTime / 30) * 0.1; // +10% cada 30 seg
+    const scoreBonus = Math.floor(this.score / 20) * 0.15; // +15% cada 20 puntos
+    this.flamingoSpeedMultiplier = 1.0 + timeBonus + scoreBonus;
+    // Limitar el multiplicador máximo a 2.5x
+    this.flamingoSpeedMultiplier = Math.min(this.flamingoSpeedMultiplier, 2.5);
+
     this.flamingos.forEach((flamingo) => {
+      // Aplicar velocidad dinámica
+      const currentSpeed = flamingo.speed * this.flamingoSpeedMultiplier;
+
       // 1. Buscar objetivo si no tiene o si ya no existe
       if (flamingo.targetIndex === null || !this.donuts[flamingo.targetIndex]) {
         flamingo.targetIndex = this.findNearestDonut(flamingo.mesh.position);
@@ -1815,7 +2076,7 @@ export class MainScene {
       // Si no hay donuts, volar en círculos o aleatoriamente
       if (flamingo.targetIndex === null) {
         flamingo.mesh.rotation.y += delta * 0.5;
-        flamingo.mesh.translateZ(flamingo.speed * delta);
+        flamingo.mesh.translateZ(currentSpeed * delta);
         return;
       }
 
@@ -1832,10 +2093,14 @@ export class MainScene {
       this.dummyObject.position.copy(flamingo.mesh.position);
       this.dummyObject.lookAt(targetDonut.position);
 
-      flamingo.mesh.quaternion.slerp(this.dummyObject.quaternion, delta * 2.0);
+      // Giro más rápido con el multiplicador
+      flamingo.mesh.quaternion.slerp(
+        this.dummyObject.quaternion,
+        delta * 2.0 * Math.min(this.flamingoSpeedMultiplier, 1.5)
+      );
 
-      // Avanzar
-      flamingo.mesh.translateZ(flamingo.speed * delta);
+      // Avanzar con velocidad dinámica
+      flamingo.mesh.translateZ(currentSpeed * delta);
 
       // 3. Comprobar si se come el donut
       if (flamingo.mesh.position.distanceTo(targetDonut.position) < 5) {
@@ -1896,8 +2161,19 @@ export class MainScene {
   private updateHunger(delta: number): void {
     if (this.isGameOver) return;
 
-    // Reducir hambre
-    this.currentHunger -= this.hungerDepletionRate * delta;
+    // Dificultad progresiva: el hambre baja más rápido con el tiempo
+    // +5% cada 45 segundos, +8% cada 30 puntos, máximo 1.8x
+    const timeBonus = Math.floor(this.cachedElapsedTime / 45) * 0.05;
+    const scoreBonus = Math.floor(this.score / 30) * 0.08;
+    // Bonus extra si está en modo difícil
+    const hardModeBonus = this.hardModeActivated ? 0.15 : 0;
+    const hungerMultiplier = Math.min(
+      1.8,
+      1.0 + timeBonus + scoreBonus + hardModeBonus
+    );
+
+    // Reducir hambre con multiplicador de dificultad
+    this.currentHunger -= this.hungerDepletionRate * hungerMultiplier * delta;
 
     // Comprobar Game Over
     if (this.currentHunger <= 0) {
