@@ -1,299 +1,196 @@
-import * as THREE from "three";
+/**
+ * PreloadScene - Pantalla de carga minimalista con sprite animado
+ * Carga los assets esenciales (modelos 3D y audio) antes de iniciar el juego
+ */
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 export class PreloadScene {
-  private overlay: HTMLElement | null = null;
-  private progressBarElement: HTMLElement | null = null;
-  private loadingManager: THREE.LoadingManager;
-  private assets: { [key: string]: any } = {};
   private onComplete: (assets: any) => void;
+  private container: HTMLDivElement | null = null;
+  private sprite: HTMLDivElement | null = null;
+  private frameIndex: number = 0;
+  private totalFrames: number = 18;
+  private frameWidth: number = 241;
+  private frameHeight: number = 345;
+  private fps: number = 12;
+  private animationInterval: any = null;
+  private assets: any = {};
+  private loader: GLTFLoader;
   private assetsLoaded: boolean = false;
+  private animationComplete: boolean = false;
+
+  // URL del sprite (mismo que en PreloadSceneBase)
+  private readonly SPRITE_URL =
+    "https://remix.gg/blob/13e738d9-e135-454e-9d2a-e456476a0c5e/sprite-start-oVCq0bchsVLwbLqAPbLgVOrQqxcVh5.webp?Cbzd";
+
+  // URL de la primera canción (precargamos solo esta)
+  private readonly MUSIC_TRACK1_URL =
+    "https://remix.gg/blob/fb09d2b3-365a-4008-a339-895b07e1fcb8/music1-3Qi9aRaEBUzcg1z8HaLMBWkOddhPFo.mp3?iB5y";
+
+  // Modelos 3D esenciales (rutas locales en /public/)
+  private readonly MODELS = {
+    map: "/map.glb",
+    pigeon: "/animated_bird_pigeon.glb",
+    donut: "/donut.glb",
+    flamingo: "/flying_flamingo.glb",
+  };
 
   constructor(onComplete: (assets: any) => void) {
     this.onComplete = onComplete;
-    this.loadingManager = new THREE.LoadingManager();
+    this.loader = new GLTFLoader();
   }
 
-  public start(): void {
-    this.createStudioBranding();
-    this.loadAssets();
+  public async start() {
+    this.createDOM();
+
+    // Iniciar animación del sprite inmediatamente
+    this.playAnimation();
+
+    // Cargar recursos esenciales en paralelo
+    await this.preloadEssentials();
   }
 
-  private loadAssets(): void {
-    const gltfLoader = new GLTFLoader(this.loadingManager);
+  private createDOM() {
+    // Contenedor principal (Fondo negro)
+    this.container = document.createElement("div");
+    this.container.id = "preload-container";
+    Object.assign(this.container.style, {
+      position: "fixed",
+      top: "0",
+      left: "0",
+      width: "100%",
+      height: "100%",
+      backgroundColor: "#000000",
+      display: "flex",
+      justifyContent: "center",
+      alignItems: "center",
+      zIndex: "9999",
+    });
 
-    // Setup loading progress listeners
-    this.loadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
-      const progress = itemsLoaded / itemsTotal;
-      this.updateProgressBar(progress);
-    };
+    // Elemento Sprite
+    this.sprite = document.createElement("div");
+    this.sprite.id = "preload-sprite";
 
-    this.loadingManager.onLoad = () => {
-      console.log("✅ Todos los assets cargados al 100%");
-      this.assetsLoaded = true;
-      this.updateProgressBar(1);
-      this.showStudioText();
-    };
+    // Escala ajustada: 0.65x para un tamaño intermedio
+    const scale =
+      Math.min(window.innerWidth / 300, window.innerHeight / 400, 1.5) * 0.65;
 
-    this.loadingManager.onError = (url) => {
-      console.warn("⚠️ Error cargando archivo:", url);
-    };
+    Object.assign(this.sprite.style, {
+      width: `${this.frameWidth}px`,
+      height: `${this.frameHeight}px`,
+      backgroundImage: `url("${this.SPRITE_URL}")`,
+      backgroundRepeat: "no-repeat",
+      backgroundPosition: "0px 0px",
+      backgroundSize: `auto ${this.frameHeight}px`,
+      transform: `scale(${scale})`,
+      transformOrigin: "center center",
+    });
 
-    // Load WebFont script manually
-    this.loadWebFont();
+    this.container.appendChild(this.sprite);
+    document.body.appendChild(this.container);
+  }
 
-    // --- GLB MODELS ---
-    const models = {
-      map: "https://g3-remix-bucket.s3.eu-north-1.amazonaws.com/map.glb",
-      pigeon:
-        "https://g3-remix-bucket.s3.eu-north-1.amazonaws.com/animated_bird_pigeon.glb",
-      flamingo:
-        "https://g3-remix-bucket.s3.eu-north-1.amazonaws.com/flying_flamingo.glb",
-      donut: "https://g3-remix-bucket.s3.eu-north-1.amazonaws.com/donut.glb",
-    };
+  private async preloadEssentials(): Promise<void> {
+    const promises: Promise<void>[] = [];
 
-    for (const [key, url] of Object.entries(models)) {
-      gltfLoader.load(url, (gltf) => {
-        this.assets[key] = gltf;
+    // 1. Precargar audio (Track 1)
+    const audioPromise = new Promise<void>((resolve) => {
+      const audio = new Audio(this.MUSIC_TRACK1_URL);
+      audio.preload = "auto";
+      const done = () => resolve();
+      audio.oncanplaythrough = done;
+      audio.onerror = done;
+      setTimeout(done, 3000);
+      audio.load();
+    });
+    promises.push(audioPromise);
+
+    // 2. Precargar modelos 3D esenciales
+    for (const [key, url] of Object.entries(this.MODELS)) {
+      const modelPromise = new Promise<void>((resolve) => {
+        this.loader.load(
+          url,
+          (gltf) => {
+            this.assets[key] = gltf;
+            console.log(`Loaded: ${key}`);
+            resolve();
+          },
+          undefined,
+          (error) => {
+            console.error(`Error loading ${key}:`, error);
+            resolve(); // Continuar aunque falle
+          }
+        );
       });
+      promises.push(modelPromise);
     }
 
-    // --- AUDIO (Pre-fetch to cache) ---
-    // We just fetch them so they are in browser cache
-    const audioUrls = [
-      "https://remix.gg/blob/fb09d2b3-365a-4008-a339-895b07e1fcb8/ding-65Fby49xt1IWgfqbAptxlYM0EpgwSx.mp3?mo7R",
-      "https://remix.gg/blob/fb09d2b3-365a-4008-a339-895b07e1fcb8/wind-hV7dAD5Sv2fVqKFhSEX7rdgcnLnVFh.mp3?WvSR",
-      "https://remix.gg/blob/fb09d2b3-365a-4008-a339-895b07e1fcb8/music1-3Qi9aRaEBUzcg1z8HaLMBWkOddhPFo.mp3?iB5y",
-      "https://remix.gg/blob/fb09d2b3-365a-4008-a339-895b07e1fcb8/music2-4plbvbDdRUTrPDc0k2qhKYfs7zMExi.mp3?AyFb",
-      "https://remix.gg/blob/fb09d2b3-365a-4008-a339-895b07e1fcb8/music3-xIkd3wjbGPWBMZ774DE8We2lzXyBo2.mp3?xIFL",
-    ];
+    // Esperar a que todo termine
+    await Promise.all(promises);
 
-    // We don't block the loading manager for audio fetch, but we could if we wanted to be strict.
-    // For now, let's just fire and forget, or use a simple fetch.
-    // To make the progress bar reflect audio, we can use a FileLoader for them, but AudioManager uses HTMLAudioElement.
-    // Let's just stick to GLBs for the progress bar as they are the heavy ones.
+    this.assetsLoaded = true;
+    this.checkTransition();
   }
 
-  private loadWebFont(): void {
-    const script = document.createElement("script");
-    script.src =
-      "https://ajax.googleapis.com/ajax/libs/webfont/1.6.26/webfont.js";
-    script.async = true;
-    document.head.appendChild(script);
+  private playAnimation() {
+    if (!this.sprite) return;
+
+    // Precargar la imagen del sprite
+    const img = new Image();
+    img.onload = () => this.runAnimationLoop();
+    img.onerror = () => this.runAnimationLoop();
+    img.src = this.SPRITE_URL;
   }
 
-  private createStudioBranding(): void {
-    const overlay = document.createElement("div");
-    overlay.id = "studio-overlay";
-    overlay.style.cssText = `
-      position: absolute;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      background: #000000;
-      z-index: 9999;
-      pointer-events: all;
-    `;
+  private runAnimationLoop() {
+    const frameDuration = 1000 / this.fps;
 
-    const studioText = document.createElement("div");
-    studioText.id = "studio-text";
-    studioText.style.cssText = `
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      font-family: "Pixelify Sans", "Press Start 2P", system-ui, monospace;
-      font-weight: 700;
-      color: #ffffff;
-      text-shadow: 3px 3px 0 #000;
-      gap: 6px;
-      opacity: 0;
-      transform: translateY(8px) scale(0.98);
-      transition: opacity 700ms ease, transform 500ms cubic-bezier(0.2, 0.6, 0.2, 1);
-      min-height: 80px;
-      width: 100%;
-    `;
+    this.animationInterval = setInterval(() => {
+      if (!this.sprite) return;
 
-    const brandMain = document.createElement("div");
-    brandMain.style.cssText = `
-      font-size: 24px;
-      letter-spacing: 3px;
-      line-height: 1;
-      color: #ffffff;
-      position: relative;
-      text-shadow: 2px 0 #000, -2px 0 #000, 0 2px #000, 0 -2px #000,
-        2px 2px #000, -2px 2px #000, 2px -2px #000, -2px -2px #000,
-        3px 3px 0 #000;
-      margin-bottom: 8px;
-    `;
-    brandMain.textContent = "HELLBOUND";
+      const positionX = -(this.frameIndex * this.frameWidth);
+      this.sprite.style.backgroundPosition = `${positionX}px 0px`;
 
-    const progressContainer = document.createElement("div");
-    progressContainer.style.cssText = `
-      width: 200px;
-      height: 20px;
-      border: 3px solid #000000;
-      border-radius: 12px;
-      margin: 12px auto;
-      display: block;
-      position: relative;
-      box-sizing: border-box;
-      background: #1a1a1a;
-      overflow: hidden;
-      box-shadow: 
-        inset 0 2px 4px rgba(0, 0, 0, 0.5),
-        0 0 8px rgba(183, 255, 0, 0.3);
-    `;
+      this.frameIndex++;
 
-    const greenLine = document.createElement("div");
-    greenLine.style.cssText = `
-      width: 0%;
-      height: 100%;
-      background: linear-gradient(to bottom, 
-        #b7ff00 0%, 
-        #a0e600 30%,
-        #8fcc00 50%,
-        #a0e600 70%,
-        #b7ff00 100%
-      );
-      border-radius: 9px;
-      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-      position: relative;
-      box-shadow: 
-        0 0 10px rgba(183, 255, 0, 0.6),
-        inset 0 1px 0 rgba(255, 255, 255, 0.3);
-    `;
-
-    progressContainer.appendChild(greenLine);
-    this.progressBarElement = greenLine;
-
-    const brandSub = document.createElement("div");
-    brandSub.style.cssText = `
-      font-size: 14px;
-      letter-spacing: 4px;
-      color: #b7ff00;
-      text-shadow: 3px 3px 0 #000, 0 0 10px rgba(183, 255, 0, 0.3);
-      line-height: 1;
-    `;
-    brandSub.textContent = "STUDIOS";
-
-    const brandTm = document.createElement("span");
-    brandTm.style.cssText = `
-      position: absolute;
-      top: -6px;
-      right: -16px;
-      font-size: 9px;
-      color: #ffffff;
-      text-shadow: 2px 2px 0 #000;
-      opacity: 0.9;
-    `;
-    brandTm.textContent = "™";
-
-    brandMain.appendChild(brandTm);
-    studioText.appendChild(brandMain);
-    studioText.appendChild(progressContainer);
-    studioText.appendChild(brandSub);
-    overlay.appendChild(studioText);
-
-    document.body.appendChild(overlay);
-
-    this.overlay = overlay;
-    (this as any).studioText = studioText;
-  }
-
-  private showStudioText(): void {
-    const studioText = (this as any).studioText;
-
-    if (!studioText) {
-      this.transitionToGame();
-      return;
-    }
-
-    studioText.style.opacity = "1";
-    studioText.style.transform = "translateY(0) scale(1)";
-
-    this.waitForAssetsAndTransition();
-  }
-
-  private waitForAssetsAndTransition(): void {
-    const minDisplayTime = 2000;
-    const startTime = Date.now();
-
-    const ensureFontsLoaded = (): Promise<void> => {
-      return new Promise((resolve) => {
-        const onWebFontReady = () => {
-          const wf = (window as any).WebFont;
-          if (!wf || !wf.load) {
-            if ((document as any).fonts?.ready) {
-              (document as any).fonts.ready
-                .then(() => resolve())
-                .catch(() => resolve());
-            } else {
-              resolve();
-            }
-            return;
-          }
-
-          wf.load({
-            google: {
-              families: ["Fredoka:700"],
-            },
-            active: () => resolve(),
-            inactive: () => resolve(),
-          });
-        };
-
-        const checkInterval = setInterval(() => {
-          if ((window as any).WebFont) {
-            clearInterval(checkInterval);
-            onWebFontReady();
-          }
-        }, 50);
-
-        setTimeout(() => {
-          clearInterval(checkInterval);
-          resolve();
-        }, 3000);
-      });
-    };
-
-    const checkAndTransition = () => {
-      const elapsedTime = Date.now() - startTime;
-
-      if (this.assetsLoaded && elapsedTime >= minDisplayTime) {
-        ensureFontsLoaded().then(() => {
-          const studioText = (this as any).studioText;
-          if (studioText) {
-            studioText.style.opacity = "0";
-            studioText.style.transform = "translateY(8px) scale(0.98)";
-          }
-
-          setTimeout(() => {
-            this.transitionToGame();
-          }, 600);
-        });
-      } else {
-        setTimeout(checkAndTransition, 100);
+      if (this.frameIndex >= this.totalFrames) {
+        this.finishAnimation();
       }
-    };
-
-    checkAndTransition();
+    }, frameDuration);
   }
 
-  private updateProgressBar(progress: number): void {
-    if (this.progressBarElement) {
-      const percentage = Math.round(progress * 100);
-      this.progressBarElement.style.width = `${percentage}%`;
+  private finishAnimation() {
+    if (this.animationInterval) {
+      clearInterval(this.animationInterval);
+      this.animationInterval = null;
+    }
+
+    // Mantener el último frame visible
+    if (this.sprite) {
+      const lastFrameX = -((this.totalFrames - 1) * this.frameWidth);
+      this.sprite.style.backgroundPosition = `${lastFrameX}px 0px`;
+    }
+
+    // Esperar 500ms en el último frame
+    setTimeout(() => {
+      this.animationComplete = true;
+      this.checkTransition();
+    }, 500);
+  }
+
+  private checkTransition() {
+    // Solo transicionar cuando AMBOS estén listos
+    if (this.animationComplete && this.assetsLoaded) {
+      this.cleanup();
+      this.onComplete(this.assets);
     }
   }
 
-  private transitionToGame(): void {
-    if (this.overlay && this.overlay.parentElement) {
-      this.overlay.parentElement.removeChild(this.overlay);
+  private cleanup() {
+    if (this.container && this.container.parentNode) {
+      this.container.parentNode.removeChild(this.container);
     }
-    this.onComplete(this.assets);
+    this.container = null;
+    this.sprite = null;
   }
 }

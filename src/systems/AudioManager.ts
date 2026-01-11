@@ -54,32 +54,44 @@ export class AudioManager {
     }
   }
 
+  private isFirstPlay: boolean = true;
+
   /**
    * Inicia la música de fondo (debe llamarse tras una interacción del usuario)
    */
   public startMusic(): void {
     if (this.isMusicPlaying) return;
 
-    this.playNextTrack();
+    // Siempre empezar con Track 1 la primera vez
+    if (this.isFirstPlay) {
+      this.currentTrackIndex = 0;
+      this.isFirstPlay = false;
+    }
+
+    this.playCurrentTrack();
     this.isMusicPlaying = true;
   }
 
-  private playNextTrack(): void {
-    // Cargar siguiente pista
+  private playCurrentTrack(): void {
     this.musicPlayer.src = this.musicTracks[this.currentTrackIndex];
-
-    // Reproducir
     this.musicPlayer.play().catch((e) => {
       console.warn(
         "No se pudo reproducir música (posiblemente falta interacción):",
         e
       );
-      this.isMusicPlaying = false; // Reintentar luego
+      this.isMusicPlaying = false;
     });
+  }
 
-    // Avanzar índice para la próxima
-    this.currentTrackIndex =
-      (this.currentTrackIndex + 1) % this.musicTracks.length;
+  private playNextTrack(): void {
+    // Después de la primera canción, elegir aleatoriamente
+    let nextIndex = Math.floor(Math.random() * this.musicTracks.length);
+    // Evitar repetir la misma canción seguida
+    if (this.musicTracks.length > 1 && nextIndex === this.currentTrackIndex) {
+      nextIndex = (nextIndex + 1) % this.musicTracks.length;
+    }
+    this.currentTrackIndex = nextIndex;
+    this.playCurrentTrack();
   }
 
   /**

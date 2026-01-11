@@ -1,7 +1,6 @@
 import GameSettings from "./config/GameSettings";
 import { MainScene } from "./scenes/MainScene";
 import { PreloadScene } from "./scenes/PreloadScene";
-import { StartScene } from "./scenes/StartScene";
 
 // SDK mock is automatically initialized by the framework (dev-init.ts)
 
@@ -28,21 +27,16 @@ const gameContainer = document.createElement("div");
 gameContainer.id = "game-container";
 document.body.appendChild(gameContainer);
 
-// Iniciar Preloader y luego el juego
+// Iniciar Preloader y cargar DIRECTAMENTE el juego (sin StartScene)
 const preloadScene = new PreloadScene((assets) => {
-  // Mostrar la pantalla de inicio
-  const startScene = new StartScene(() => {
-    // Cuando el usuario pulse START, crear la escena principal
-    const mainScene = new MainScene(assets);
+  // Crear la escena principal directamente
+  const mainScene = new MainScene(assets);
 
-    // Añadir el canvas de Three.js al contenedor
-    gameContainer.appendChild(mainScene.getRendererElement());
+  // Añadir el canvas de Three.js al contenedor
+  gameContainer.appendChild(mainScene.getRendererElement());
 
-    // Almacenar globalmente para HMR cleanup
-    (window as any).mainScene = mainScene;
-  });
-
-  startScene.show();
+  // Almacenar globalmente para HMR cleanup
+  (window as any).mainScene = mainScene;
 });
 
 preloadScene.start();

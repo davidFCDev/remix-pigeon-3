@@ -36,6 +36,7 @@ export class MainScene {
   private hungerDepletionRate: number = 4.0; // Puntos por segundo (aumentado)
   private hungerBarElement: HTMLElement | null = null;
   private isGameOver: boolean = false;
+  private isGamePaused: boolean = false;
 
   // Enemigos (Flamingos)
   private flamingos: {
@@ -72,7 +73,7 @@ export class MainScene {
   private trailGeometry: THREE.BoxGeometry | null = null; // Geometría compartida para estela
   private isSpeedBoostActive: boolean = false;
   private speedBoostTimer: number = 0;
-  private baseSpeed: number = 25.0;
+  private baseSpeed: number = 35.0; // Increased natural speed
   private boostSpeed: number = 80.0; // Ultravelocidad
   private trailParticles: THREE.Mesh[] = [];
 
@@ -83,7 +84,7 @@ export class MainScene {
   // Sistema de Remolinos (atraen y ralentizan)
   private whirlpools: THREE.Group[] = [];
   private whirlpoolRadius: number = 80; // Radio de atracción
-  private whirlpoolPullStrength: number = 8; // Fuerza de atracción (reducida para poder escapar)
+  private whirlpoolPullStrength: number = 5; // Fuerza de atracción (reducida para poder escapar)
   private whirlpoolSlowSpeed: number = 12; // Velocidad reducida en remolino
   private isInWhirlpool: boolean = false;
   private whirlpoolRepositionTimer: number = 0; // Timer para reposicionar
@@ -114,7 +115,7 @@ export class MainScene {
   private mousePosition: THREE.Vector2 = new THREE.Vector2();
   private targetMousePosition: THREE.Vector2 = new THREE.Vector2(); // Para suavizado
   private isMouseDown: boolean = false;
-  private pigeonSpeed: number = 25.0; // Unidades por segundo (antes 0.4 por frame)
+  private pigeonSpeed: number = 35.0; // Unidades por segundo (antes 0.4 por frame)
   private pigeonRotationSpeed: number = 2.0; // Radianes por segundo (antes 0.04 por frame)
   private mouseSensitivity: number = 0.0008; // Sensibilidad del ratón reducida drásticamente
 
@@ -256,6 +257,9 @@ export class MainScene {
     // Inicializar SDK de Farcade
     this.initFarcadeSDK();
 
+    // Mostrar How to Play al inicio
+    this.showHowToPlay();
+
     // Iniciar loop de animación
     this.animate();
   }
@@ -278,6 +282,12 @@ export class MainScene {
         const muteData = data as { isMuted: boolean };
         this.audioManager.setMuted(muteData.isMuted);
       });
+
+      // Comprobar compras
+      this.checkSupportStatus();
+    } else {
+      // Dev mode fallback
+      this.checkSupportStatus();
     }
   }
 
@@ -1151,6 +1161,15 @@ export class MainScene {
     textElement.className = "floating-text";
     textElement.textContent = text;
 
+    // Estilos mejorados para visibilidad
+    textElement.style.fontFamily = "'Fredoka', 'Comic Sans MS', cursive";
+    textElement.style.fontWeight = "bold";
+    textElement.style.color = "#ff4444"; // Color tipo CHAOS MODE
+    textElement.style.textShadow =
+      "2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000"; // Borde negro fuerte
+    textElement.style.fontSize = "24px";
+    textElement.style.pointerEvents = "none"; // Asegurar que no bloquea clicks
+
     // Añadir variación horizontal aleatoria para que no se superpongan
     const randomOffset = (Math.random() - 0.5) * 60;
     textElement.style.left = `calc(50% + ${randomOffset}px)`;
@@ -1710,8 +1729,9 @@ export class MainScene {
     // 1. Rotación (Yaw) - RATÓN + TECLADO + MÓVIL
     let turnSpeed = 0;
 
-    // Ratón: Giro directo
-    turnSpeed += this.targetMousePosition.x * 2.0; // Factor de velocidad
+    // Ratón: Giro directo - Suavizado en ultravelocidad
+    const mouseSensitivity = this.isSpeedBoostActive ? 1.0 : 2.0;
+    turnSpeed += this.targetMousePosition.x * mouseSensitivity;
     this.targetMousePosition.x = 0; // Reset
 
     // Teclado - Giro progresivo (aceleración suave)
@@ -1756,10 +1776,12 @@ export class MainScene {
     }
 
     // Suavizar el giro en móvil (aceleración/deceleración progresiva)
+    // Más suave (lento) cuando estamos en ultravelocidad para evitar giros bruscos
+    const lerpFactor = this.isSpeedBoostActive ? 4 : 8;
     this.currentTurnSpeed = THREE.MathUtils.lerp(
       this.currentTurnSpeed,
       targetTurnSpeed,
-      delta * 8 // Velocidad de transición
+      delta * lerpFactor // Velocidad de transición
     );
     turnSpeed += this.currentTurnSpeed;
 
@@ -2278,6 +2300,11 @@ export class MainScene {
 
     requestAnimationFrame(this.animate);
 
+    if (this.isGamePaused) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
     // Calcular delta time (tiempo transcurrido desde el último frame en segundos)
     const delta = this.clock.getDelta();
 
@@ -2307,6 +2334,259 @@ export class MainScene {
   };
 
   /**
+   * Comprueba si el usuario ya ha apoyado al desarrollador
+   */
+  private checkSupportStatus(): void {
+    // Si no hay SDK, mostramos el botón por defecto (o lo ocultamos? User says "Para comprobar... debemos comprobar")
+    if (!window.FarcadeSDK) {
+      this.createSupportUI();
+      return;
+    }
+
+    // Intenta comprobar el inventario. Asumimos que inventory es un array o tiene metodo has
+    try {
+      const sdk = window.FarcadeSDK as any;
+      if (sdk.inventory && sdk.inventory.hasItem) {
+        const hasTip = sdk.inventory.hasItem("just-a-tip");
+        if (!hasTip) this.createSupportUI();
+      } else {
+        // Fallback: mostrar siempre si no podemos comprobar
+        this.createSupportUI();
+      }
+    } catch (e) {
+      console.warn("Error checking inventory:", e);
+      this.createSupportUI();
+    }
+  }
+
+  /**
+   * Crea el botón de corazón
+   */
+  private createSupportUI(): void {
+    const heartBtn = document.createElement("button");
+    heartBtn.id = "support-heart-btn";
+    heartBtn.textContent = "♥";
+    heartBtn.style.cssText = `
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        background-color: rgba(255, 68, 68, 0.8);
+        color: white;
+        font-size: 24px;
+        border: 2px solid white;
+        cursor: pointer;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.2s;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    `;
+
+    heartBtn.onmouseenter = () => (heartBtn.style.transform = "scale(1.1)");
+    heartBtn.onmouseleave = () => (heartBtn.style.transform = "scale(1.0)");
+    heartBtn.onclick = () => this.openSupportOverlay();
+
+    document.body.appendChild(heartBtn);
+  }
+
+  private openSupportOverlay(): void {
+    this.isGamePaused = true;
+
+    const overlay = document.createElement("div");
+    overlay.id = "support-overlay";
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background-color: rgba(0, 0, 0, 0.85);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+        backdrop-filter: blur(5px);
+        font-family: 'Fredoka', 'Comic Sans MS', cursive;
+    `;
+
+    // Titulo
+    const title = document.createElement("h2");
+    title.textContent = "Just a tip";
+    title.style.cssText =
+      "color: #ff4444; font-size: 42px; margin-bottom: 10px; text-align: center;";
+
+    // Subtitulo
+    const subtitle = document.createElement("p");
+    subtitle.textContent = "Support me if you enjoy my games";
+    subtitle.style.cssText =
+      "color: #ccc; font-size: 20px; margin-bottom: 40px; text-align: center; max-width: 80%;";
+
+    // Boton 100 credits
+    const buyBtn = document.createElement("button");
+    buyBtn.textContent = "100 credits";
+    buyBtn.style.cssText = `
+        padding: 15px 40px;
+        font-size: 24px;
+        background-color: #ff4444;
+        color: white;
+        border: none;
+        border-radius: 50px;
+        cursor: pointer;
+        font-weight: bold;
+        box-shadow: 0 0 20px rgba(255, 68, 68, 0.4);
+        margin-bottom: 20px;
+        transition: transform 0.2s;
+    `;
+    buyBtn.onmouseenter = () => (buyBtn.style.transform = "scale(1.05)");
+    buyBtn.onmouseleave = () => (buyBtn.style.transform = "scale(1.0)");
+    buyBtn.onclick = () => {
+      const sdk = window.FarcadeSDK as any;
+      if (sdk && sdk.payments && sdk.payments.initiatePurchase) {
+        sdk.payments
+          .initiatePurchase({ itemId: "just-a-tip" })
+          .then(() => {
+            // Si éxito, cerrar y ocultar botón
+            this.closeSupportOverlay();
+            const btn = document.getElementById("support-heart-btn");
+            if (btn) btn.remove();
+          })
+          .catch((err: any) => console.error(err));
+      } else {
+        console.log("Purchase logic (SDK not ready)");
+      }
+    };
+
+    // Back button
+    const backBtn = document.createElement("button");
+    backBtn.textContent = "Back";
+    backBtn.style.cssText = `
+        background: transparent;
+        border: 2px solid #555;
+        color: #aaa;
+        padding: 10px 30px;
+        border-radius: 30px;
+        cursor: pointer;
+        font-size: 16px;
+        transition: all 0.2s;
+    `;
+    backBtn.onmouseenter = () => {
+      backBtn.style.borderColor = "#fff";
+      backBtn.style.color = "#fff";
+    };
+    backBtn.onmouseleave = () => {
+      backBtn.style.borderColor = "#555";
+      backBtn.style.color = "#aaa";
+    };
+    backBtn.onclick = () => this.closeSupportOverlay();
+
+    overlay.appendChild(title);
+    overlay.appendChild(subtitle);
+    overlay.appendChild(buyBtn);
+    overlay.appendChild(backBtn);
+
+    document.body.appendChild(overlay);
+  }
+
+  private closeSupportOverlay(): void {
+    const overlay = document.getElementById("support-overlay");
+    if (overlay) overlay.remove();
+    this.isGamePaused = false;
+  }
+
+  /**
+   * Muestra las instrucciones del juego la primera vez
+   */
+  private showHowToPlay(): void {
+    this.isGamePaused = true;
+
+    const overlay = document.createElement("div");
+    overlay.id = "howtoplay-overlay";
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background-color: rgba(0, 0, 0, 0.85);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+        backdrop-filter: blur(5px);
+        font-family: 'Fredoka', 'Comic Sans MS', cursive;
+    `;
+
+    // Título
+    const title = document.createElement("h2");
+    title.textContent = "How to Play";
+    title.style.cssText =
+      "color: #ff4444; font-size: 36px; margin-bottom: 30px; text-align: center;";
+
+    // Lista de instrucciones
+    const instructionsList = document.createElement("div");
+    instructionsList.style.cssText = `
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-bottom: 30px;
+        max-width: 400px;
+    `;
+
+    const instructions = [
+      "Pigeon is hungry, eat donuts!",
+      "If the meter empties, game over",
+      "Flamingos steal your food",
+      "Use power-ups to go faster",
+      "Avoid whirlpools, they slow you down",
+    ];
+
+    instructions.forEach((text) => {
+      const row = document.createElement("div");
+      row.style.cssText = "display: flex; align-items: center; gap: 15px;";
+
+      const bullet = document.createElement("span");
+      bullet.textContent = "•";
+      bullet.style.cssText = "font-size: 24px; color: #ff4444;";
+
+      const textEl = document.createElement("span");
+      textEl.textContent = text;
+      textEl.style.cssText = "font-size: 18px; color: #fff;";
+
+      row.appendChild(bullet);
+      row.appendChild(textEl);
+      instructionsList.appendChild(row);
+    });
+
+    // Botón GO
+    const goBtn = document.createElement("button");
+    goBtn.textContent = "GO!";
+    goBtn.style.cssText = `
+        padding: 15px 60px;
+        font-size: 28px;
+        background-color: #ff4444;
+        color: white;
+        border: none;
+        border-radius: 50px;
+        cursor: pointer;
+        font-weight: bold;
+        box-shadow: 0 0 20px rgba(255, 68, 68, 0.4);
+        transition: transform 0.2s;
+    `;
+    goBtn.onmouseenter = () => (goBtn.style.transform = "scale(1.05)");
+    goBtn.onmouseleave = () => (goBtn.style.transform = "scale(1.0)");
+    goBtn.onclick = () => {
+      overlay.remove();
+      this.isGamePaused = false;
+      this.audioManager.startMusic();
+    };
+
+    overlay.appendChild(title);
+    overlay.appendChild(instructionsList);
+    overlay.appendChild(goBtn);
+    document.body.appendChild(overlay);
+  }
+
+  /**
    * Obtiene el elemento DOM del renderer para añadirlo al documento
    */
   public getRendererElement(): HTMLCanvasElement {
@@ -2321,6 +2601,12 @@ export class MainScene {
     window.removeEventListener("keydown", () => {});
     window.removeEventListener("keyup", () => {});
     window.removeEventListener("resize", this.handleResize);
+
+    // Limpiar UI
+    const heartBtn = document.getElementById("support-heart-btn");
+    if (heartBtn) heartBtn.remove();
+    const overlay = document.getElementById("support-overlay");
+    if (overlay) overlay.remove();
 
     // Limpiar geometrías y materiales
     this.scene.traverse((object) => {
