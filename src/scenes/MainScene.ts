@@ -2337,24 +2337,24 @@ export class MainScene {
    * Comprueba si el usuario ya ha apoyado al desarrollador
    */
   private checkSupportStatus(): void {
-    // Si no hay SDK, mostramos el botón por defecto (o lo ocultamos? User says "Para comprobar... debemos comprobar")
+    // Si no hay SDK, mostramos el botón por defecto
     if (!window.FarcadeSDK) {
       this.createSupportUI();
       return;
     }
 
-    // Intenta comprobar el inventario. Asumimos que inventory es un array o tiene metodo has
+    // Comprobar si el usuario ya tiene el item usando la API correcta del SDK
     try {
       const sdk = window.FarcadeSDK as any;
-      if (sdk.inventory && sdk.inventory.hasItem) {
-        const hasTip = sdk.inventory.hasItem("just-a-tip");
+      if (sdk.hasItem && typeof sdk.hasItem === 'function') {
+        const hasTip = sdk.hasItem("just-a-tip");
         if (!hasTip) this.createSupportUI();
       } else {
         // Fallback: mostrar siempre si no podemos comprobar
         this.createSupportUI();
       }
     } catch (e) {
-      console.warn("Error checking inventory:", e);
+      console.warn("Error checking purchased items:", e);
       this.createSupportUI();
     }
   }
@@ -2441,18 +2441,20 @@ export class MainScene {
     `;
     buyBtn.onmouseenter = () => (buyBtn.style.transform = "scale(1.05)");
     buyBtn.onmouseleave = () => (buyBtn.style.transform = "scale(1.0)");
-    buyBtn.onclick = () => {
+    buyBtn.onclick = async () => {
       const sdk = window.FarcadeSDK as any;
-      if (sdk && sdk.payments && sdk.payments.initiatePurchase) {
-        sdk.payments
-          .initiatePurchase({ itemId: "just-a-tip" })
-          .then(() => {
+      if (sdk && sdk.purchase && typeof sdk.purchase === 'function') {
+        try {
+          const result = await sdk.purchase({ item: "just-a-tip" });
+          if (result && result.success) {
             // Si éxito, cerrar y ocultar botón
             this.closeSupportOverlay();
             const btn = document.getElementById("support-heart-btn");
             if (btn) btn.remove();
-          })
-          .catch((err: any) => console.error(err));
+          }
+        } catch (err: any) {
+          console.error("Purchase error:", err);
+        }
       } else {
         console.log("Purchase logic (SDK not ready)");
       }
