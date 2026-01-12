@@ -41,8 +41,8 @@ const preloadScene = new PreloadScene((assets) => {
 
 preloadScene.start();
 
-// Cleanup para Hot Module Replacement
-if (import.meta.hot) {
+// Cleanup para Hot Module Replacement (solo en desarrollo)
+if (typeof import.meta.hot !== "undefined" && import.meta.hot) {
   import.meta.hot.dispose(() => {
     if ((window as any).mainScene) {
       (window as any).mainScene.destroy();

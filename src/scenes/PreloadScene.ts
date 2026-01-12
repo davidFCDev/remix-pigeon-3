@@ -27,12 +27,15 @@ export class PreloadScene {
   private readonly MUSIC_TRACK1_URL =
     "https://remix.gg/blob/fb09d2b3-365a-4008-a339-895b07e1fcb8/music1-3Qi9aRaEBUzcg1z8HaLMBWkOddhPFo.mp3?iB5y";
 
-  // Modelos 3D esenciales (rutas locales en /public/)
+  // Modelos 3D esenciales (URLs remotas)
   private readonly MODELS = {
-    map: "/map.glb",
-    pigeon: "/animated_bird_pigeon.glb",
-    donut: "/donut.glb",
-    flamingo: "/flying_flamingo.glb",
+    map: "https://remix.gg/blob/fb09d2b3-365a-4008-a339-895b07e1fcb8/map-oXzgPQilN7-5ANGhlWdRCMadhlpLLfBXO9ER27Qhv.glb?vS75",
+    pigeon:
+      "https://remix.gg/blob/fb09d2b3-365a-4008-a339-895b07e1fcb8/animated_bird_pigeon-ChFuZzZ1CnyHJ3wlXAI98BTDsrSuHV.glb?zzMM",
+    donut:
+      "https://raw.githubusercontent.com/davidFCDev/remix-pigeon-3/main/public/donut.glb",
+    flamingo:
+      "https://remix.gg/blob/fb09d2b3-365a-4008-a339-895b07e1fcb8/flying_flamingo-OlazB63JqxOUEsaspAV8vLV3ltVT3E.glb?greA",
   };
 
   constructor(onComplete: (assets: any) => void) {
