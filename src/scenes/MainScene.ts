@@ -1782,15 +1782,17 @@ export class MainScene {
 
     // Móvil (Hold Left/Right) - Giro progresivo
     let targetTurnSpeed = 0;
+    // Reducir la velocidad de giro en móvil durante ultravelocidad
+    const mobileRotationMultiplier = this.isSpeedBoostActive ? 0.6 : 1.2;
     if (this.isTurningLeft) {
-      targetTurnSpeed = this.pigeonRotationSpeed * delta * 1.2;
+      targetTurnSpeed = this.pigeonRotationSpeed * delta * mobileRotationMultiplier;
     } else if (this.isTurningRight) {
-      targetTurnSpeed = -this.pigeonRotationSpeed * delta * 1.2;
+      targetTurnSpeed = -this.pigeonRotationSpeed * delta * mobileRotationMultiplier;
     }
 
     // Suavizar el giro en móvil (aceleración/deceleración progresiva)
-    // Más suave (lento) cuando estamos en ultravelocidad para evitar giros bruscos
-    const lerpFactor = this.isSpeedBoostActive ? 4 : 8;
+    // Mucho más suave cuando estamos en ultravelocidad para evitar giros bruscos
+    const lerpFactor = this.isSpeedBoostActive ? 2 : 8;
     this.currentTurnSpeed = THREE.MathUtils.lerp(
       this.currentTurnSpeed,
       targetTurnSpeed,
