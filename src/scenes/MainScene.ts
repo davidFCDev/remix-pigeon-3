@@ -1056,23 +1056,26 @@ export class MainScene {
   private collectPowerUp(index: number): void {
     const collectedPowerUp = this.powerUps[index];
 
-    // Reproducir sonido
-    this.audioManager.playPowerUpSound();
-
-    // Haptic feedback
-    if (window.FarcadeSDK) {
-      window.FarcadeSDK.singlePlayer.actions.hapticFeedback();
-    }
-
-    // Eliminar (sin efecto visual, el efecto es la estela de viento)
+    // Eliminar inmediatamente (prioridad visual)
     this.scene.remove(collectedPowerUp);
     this.powerUps.splice(index, 1);
 
-    // Activar Turbo
+    // Activar Turbo inmediatamente
     this.activateSpeedBoost();
 
-    // Reponer Power-up
-    this.spawnRandomPowerUp();
+    // Diferir operaciones costosas al siguiente frame para evitar lag/tirón
+    requestAnimationFrame(() => {
+      // Reproducir sonido (puede causar lag en móvil)
+      this.audioManager.playPowerUpSound();
+
+      // Haptic feedback (puede causar lag en móvil)
+      if (window.FarcadeSDK?.singlePlayer?.actions?.hapticFeedback) {
+        window.FarcadeSDK.singlePlayer.actions.hapticFeedback();
+      }
+
+      // Reponer Power-up
+      this.spawnRandomPowerUp();
+    });
   }
 
   /**
@@ -1818,8 +1821,8 @@ export class MainScene {
 
     // Móvil (Hold Left/Right) - Giro progresivo
     let targetTurnSpeed = 0;
-    // Reducir la velocidad de giro en móvil durante ultravelocidad
-    const mobileRotationMultiplier = this.isSpeedBoostActive ? 0.6 : 1.2;
+    // Multiplicador de rotación en móvil
+    const mobileRotationMultiplier = 1.2;
     if (this.isTurningLeft) {
       targetTurnSpeed =
         this.pigeonRotationSpeed * delta * mobileRotationMultiplier;
@@ -1829,8 +1832,7 @@ export class MainScene {
     }
 
     // Suavizar el giro en móvil (aceleración/deceleración progresiva)
-    // Mucho más suave cuando estamos en ultravelocidad para evitar giros bruscos
-    const lerpFactor = this.isSpeedBoostActive ? 2 : 8;
+    const lerpFactor = 8;
     this.currentTurnSpeed = THREE.MathUtils.lerp(
       this.currentTurnSpeed,
       targetTurnSpeed,
