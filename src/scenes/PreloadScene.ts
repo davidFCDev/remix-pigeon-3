@@ -100,21 +100,24 @@ export class PreloadScene {
     const fontPromise = new Promise<void>((resolve) => {
       // Usar Font Loading API si está disponible
       if (document.fonts && document.fonts.load) {
-        document.fonts.load('bold 48px Fredoka').then(() => {
-          console.log('Font Fredoka loaded');
-          resolve();
-        }).catch(() => {
-          console.warn('Font Fredoka failed to load via API');
-          resolve();
-        });
+        document.fonts
+          .load("bold 48px Fredoka")
+          .then(() => {
+            console.log("Font Fredoka loaded");
+            resolve();
+          })
+          .catch(() => {
+            console.warn("Font Fredoka failed to load via API");
+            resolve();
+          });
       } else {
         // Fallback: crear elemento temporal para forzar carga
-        const testEl = document.createElement('span');
-        testEl.style.fontFamily = 'Fredoka';
-        testEl.style.fontSize = '48px';
-        testEl.style.position = 'absolute';
-        testEl.style.left = '-9999px';
-        testEl.textContent = 'Font Loading Test';
+        const testEl = document.createElement("span");
+        testEl.style.fontFamily = "Fredoka";
+        testEl.style.fontSize = "48px";
+        testEl.style.position = "absolute";
+        testEl.style.left = "-9999px";
+        testEl.textContent = "Font Loading Test";
         document.body.appendChild(testEl);
         setTimeout(() => {
           testEl.remove();
