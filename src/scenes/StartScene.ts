@@ -16,7 +16,16 @@ export class StartScene {
    * Carga el estado del juego desde el SDK o localStorage
    */
   private loadGameState(): void {
-    // Intentar cargar desde localStorage como fallback
+    // Primero intentar cargar desde el SDK
+    if (window.FarcadeSDK && window.FarcadeSDK.gameState) {
+      const sdkState = window.FarcadeSDK.gameState as { hasSeenInstructions?: boolean };
+      if (sdkState && sdkState.hasSeenInstructions !== undefined) {
+        this.hasSeenInstructions = sdkState.hasSeenInstructions;
+        return;
+      }
+    }
+
+    // Fallback: cargar desde localStorage
     const savedState = localStorage.getItem("birdgame_state");
     if (savedState) {
       try {
@@ -41,7 +50,11 @@ export class StartScene {
 
     // Guardar usando el SDK si está disponible
     if (window.FarcadeSDK?.singlePlayer?.actions?.saveGameState) {
-      window.FarcadeSDK.singlePlayer.actions.saveGameState({ gameState });
+      try {
+        window.FarcadeSDK.singlePlayer.actions.saveGameState({ gameState });
+      } catch (e) {
+        console.warn("Error saving game state to SDK:", e);
+      }
     }
   }
 

@@ -267,24 +267,37 @@ export class MainScene {
   /**
    * Inicializa el SDK de Farcade y configura los event listeners
    */
-  private initFarcadeSDK(): void {
+  private async initFarcadeSDK(): Promise<void> {
     if (window.FarcadeSDK) {
-      // Indicar que el juego está listo
-      window.FarcadeSDK.singlePlayer.actions.ready();
+      try {
+        // Esperar a que el SDK esté completamente listo
+        await window.FarcadeSDK.ready();
 
-      // Manejar play again
-      window.FarcadeSDK.on("play_again", () => {
-        location.reload();
-      });
+        // Manejar play again
+        window.FarcadeSDK.onPlayAgain(() => {
+          location.reload();
+        });
 
-      // Manejar mute/unmute
-      window.FarcadeSDK.on("toggle_mute", (data) => {
-        const muteData = data as { isMuted: boolean };
-        this.audioManager.setMuted(muteData.isMuted);
-      });
+        // Manejar mute/unmute
+        window.FarcadeSDK.onToggleMute((data: { isMuted: boolean }) => {
+          this.audioManager.setMuted(data.isMuted);
+        });
 
-      // Comprobar compras
-      this.checkSupportStatus();
+        // Manejar compras completadas
+        window.FarcadeSDK.onPurchaseComplete((data: { success: boolean }) => {
+          if (data.success) {
+            // Ocultar el botón de soporte si la compra fue exitosa
+            const btn = document.getElementById("support-heart-btn");
+            if (btn) btn.remove();
+          }
+        });
+
+        // Comprobar compras
+        this.checkSupportStatus();
+      } catch (e) {
+        console.warn("Error initializing Farcade SDK:", e);
+        this.checkSupportStatus();
+      }
     } else {
       // Dev mode fallback
       this.checkSupportStatus();
