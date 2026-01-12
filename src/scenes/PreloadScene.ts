@@ -96,6 +96,36 @@ export class PreloadScene {
   private async preloadEssentials(): Promise<void> {
     const promises: Promise<void>[] = [];
 
+    // 0. Precargar fuente Fredoka (importante para móvil)
+    const fontPromise = new Promise<void>((resolve) => {
+      // Usar Font Loading API si está disponible
+      if (document.fonts && document.fonts.load) {
+        document.fonts.load('bold 48px Fredoka').then(() => {
+          console.log('Font Fredoka loaded');
+          resolve();
+        }).catch(() => {
+          console.warn('Font Fredoka failed to load via API');
+          resolve();
+        });
+      } else {
+        // Fallback: crear elemento temporal para forzar carga
+        const testEl = document.createElement('span');
+        testEl.style.fontFamily = 'Fredoka';
+        testEl.style.fontSize = '48px';
+        testEl.style.position = 'absolute';
+        testEl.style.left = '-9999px';
+        testEl.textContent = 'Font Loading Test';
+        document.body.appendChild(testEl);
+        setTimeout(() => {
+          testEl.remove();
+          resolve();
+        }, 500);
+      }
+      // Timeout de seguridad
+      setTimeout(resolve, 2000);
+    });
+    promises.push(fontPromise);
+
     // 1. Precargar audio (Track 1)
     const audioPromise = new Promise<void>((resolve) => {
       const audio = new Audio(this.MUSIC_TRACK1_URL);
