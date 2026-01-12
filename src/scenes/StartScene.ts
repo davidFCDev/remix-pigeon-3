@@ -13,42 +13,27 @@ export class StartScene {
   }
 
   /**
-   * Carga el estado del juego desde el SDK o localStorage
+   * Carga el estado del juego desde el SDK
+   * Nota: localStorage no está disponible en Remix, usamos solo SDK
    */
   private loadGameState(): void {
-    // Primero intentar cargar desde el SDK
-    if (window.FarcadeSDK && window.FarcadeSDK.gameState) {
-      const sdkState = window.FarcadeSDK.gameState as { hasSeenInstructions?: boolean };
-      if (sdkState && sdkState.hasSeenInstructions !== undefined) {
-        this.hasSeenInstructions = sdkState.hasSeenInstructions;
-        return;
-      }
-    }
-
-    // Fallback: cargar desde localStorage
-    const savedState = localStorage.getItem("birdgame_state");
-    if (savedState) {
-      try {
-        const state = JSON.parse(savedState);
-        this.hasSeenInstructions = state.hasSeenInstructions || false;
-      } catch (e) {
-        this.hasSeenInstructions = false;
-      }
-    }
+    // El estado se carga desde gameInfo.initialGameState en el SDK
+    // Esta función se mantiene para compatibilidad pero el estado real
+    // se carga en initFarcadeSDK cuando se llama a singlePlayer.actions.ready()
+    this.hasSeenInstructions = false;
   }
 
   /**
-   * Guarda el estado del juego usando el SDK y localStorage
+   * Guarda el estado del juego usando el SDK
+   * Nota: localStorage no está disponible en Remix
    */
   private saveGameState(): void {
     const gameState = {
       hasSeenInstructions: true,
+      timestamp: Date.now(),
     };
 
-    // Guardar en localStorage como fallback
-    localStorage.setItem("birdgame_state", JSON.stringify(gameState));
-
-    // Guardar usando el SDK si está disponible
+    // Guardar usando el SDK
     if (window.FarcadeSDK?.singlePlayer?.actions?.saveGameState) {
       try {
         window.FarcadeSDK.singlePlayer.actions.saveGameState({ gameState });

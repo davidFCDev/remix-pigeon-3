@@ -157,6 +157,9 @@ export class MainScene {
   private currentTurnSpeed: number = 0; // Para suavizar el giro en móvil
   private keyboardTurnSpeed: number = 0; // Para suavizar el giro de teclado
 
+  // Estado del juego (persistido con SDK)
+  private hasSeenInstructions: boolean = false;
+
   // Optimización: Detectar móvil una sola vez
   private isMobile: boolean = false;
 
@@ -254,11 +257,8 @@ export class MainScene {
       scoreContainer.style.display = "flex";
     }
 
-    // Inicializar SDK de Farcade
+    // Inicializar SDK de Farcade (ahora maneja showHowToPlay internamente)
     this.initFarcadeSDK();
-
-    // Mostrar How to Play al inicio
-    this.showHowToPlay();
 
     // Iniciar loop de animación
     this.animate();
@@ -270,8 +270,16 @@ export class MainScene {
   private async initFarcadeSDK(): Promise<void> {
     if (window.FarcadeSDK) {
       try {
-        // Esperar a que el SDK esté completamente listo
-        await window.FarcadeSDK.ready();
+        // Usar singlePlayer.actions.ready() para obtener gameInfo con initialGameState
+        const gameInfo = await window.FarcadeSDK.singlePlayer.actions.ready();
+
+        // Cargar estado inicial si existe
+        if (gameInfo?.initialGameState?.gameState) {
+          const state = gameInfo.initialGameState.gameState;
+          if (state.hasSeenInstructions !== undefined) {
+            this.hasSeenInstructions = state.hasSeenInstructions;
+          }
+        }
 
         // Manejar play again
         window.FarcadeSDK.onPlayAgain(() => {
@@ -294,13 +302,41 @@ export class MainScene {
 
         // Comprobar compras
         this.checkSupportStatus();
+
+        // Mostrar How to Play solo si el usuario no ha visto las instrucciones
+        if (!this.hasSeenInstructions) {
+          this.showHowToPlay();
+        } else {
+          // Si ya vio las instrucciones, iniciar música directamente
+          this.audioManager.startMusic();
+        }
       } catch (e) {
         console.warn("Error initializing Farcade SDK:", e);
         this.checkSupportStatus();
+        // En caso de error, mostrar instrucciones por defecto
+        this.showHowToPlay();
       }
     } else {
       // Dev mode fallback
       this.checkSupportStatus();
+      this.showHowToPlay();
+    }
+  }
+
+  /**
+   * Guarda el estado del juego usando el SDK
+   */
+  private saveGameState(): void {
+    if (window.FarcadeSDK?.singlePlayer?.actions?.saveGameState) {
+      const gameState = {
+        hasSeenInstructions: this.hasSeenInstructions,
+        timestamp: Date.now(),
+      };
+      try {
+        window.FarcadeSDK.singlePlayer.actions.saveGameState({ gameState });
+      } catch (e) {
+        console.warn("Error saving game state to SDK:", e);
+      }
     }
   }
 
@@ -1785,9 +1821,11 @@ export class MainScene {
     // Reducir la velocidad de giro en móvil durante ultravelocidad
     const mobileRotationMultiplier = this.isSpeedBoostActive ? 0.6 : 1.2;
     if (this.isTurningLeft) {
-      targetTurnSpeed = this.pigeonRotationSpeed * delta * mobileRotationMultiplier;
+      targetTurnSpeed =
+        this.pigeonRotationSpeed * delta * mobileRotationMultiplier;
     } else if (this.isTurningRight) {
-      targetTurnSpeed = -this.pigeonRotationSpeed * delta * mobileRotationMultiplier;
+      targetTurnSpeed =
+        -this.pigeonRotationSpeed * delta * mobileRotationMultiplier;
     }
 
     // Suavizar el giro en móvil (aceleración/deceleración progresiva)
@@ -2361,7 +2399,7 @@ export class MainScene {
     // Comprobar si el usuario ya tiene el item usando la API correcta del SDK
     try {
       const sdk = window.FarcadeSDK as any;
-      if (sdk.hasItem && typeof sdk.hasItem === 'function') {
+      if (sdk.hasItem && typeof sdk.hasItem === "function") {
         const hasTip = sdk.hasItem("just-a-tip");
         if (!hasTip) this.createSupportUI();
       } else {
@@ -2458,7 +2496,7 @@ export class MainScene {
     buyBtn.onmouseleave = () => (buyBtn.style.transform = "scale(1.0)");
     buyBtn.onclick = async () => {
       const sdk = window.FarcadeSDK as any;
-      if (sdk && sdk.purchase && typeof sdk.purchase === 'function') {
+      if (sdk && sdk.purchase && typeof sdk.purchase === "function") {
         try {
           const result = await sdk.purchase({ item: "just-a-tip" });
           if (result && result.success) {
@@ -2592,6 +2630,10 @@ export class MainScene {
     goBtn.onmouseenter = () => (goBtn.style.transform = "scale(1.05)");
     goBtn.onmouseleave = () => (goBtn.style.transform = "scale(1.0)");
     goBtn.onclick = () => {
+      // Marcar que el usuario ya vio las instrucciones y guardar estado
+      this.hasSeenInstructions = true;
+      this.saveGameState();
+
       overlay.remove();
       this.isGamePaused = false;
       this.audioManager.startMusic();
