@@ -36,7 +36,7 @@ export class MainScene {
   private hungerDepletionRate: number = 4.0; // Puntos por segundo (aumentado)
   private hungerBarElement: HTMLElement | null = null;
   private isGameOver: boolean = false;
-  private isGamePaused: boolean = false;
+  private isGamePaused: boolean = true; // Inicia pausado hasta que termine la cuenta atrás
 
   // Enemigos (Flamingos)
   private flamingos: {
@@ -83,8 +83,8 @@ export class MainScene {
 
   // Sistema de Remolinos (atraen y ralentizan)
   private whirlpools: THREE.Group[] = [];
-  private whirlpoolRadius: number = 80; // Radio de atracción
-  private whirlpoolPullStrength: number = 5; // Fuerza de atracción (reducida para poder escapar)
+  private whirlpoolRadius: number = 55; // Radio de atracción (reducido)
+  private whirlpoolPullStrength: number = 4; // Fuerza de atracción (reducida para poder escapar)
   private whirlpoolSlowSpeed: number = 12; // Velocidad reducida en remolino
   private isInWhirlpool: boolean = false;
   private whirlpoolRepositionTimer: number = 0; // Timer para reposicionar
@@ -108,7 +108,7 @@ export class MainScene {
 
   // Animación
   private mixer: THREE.AnimationMixer | null = null;
-  private clock: THREE.Clock = new THREE.Clock();
+  private clock: THREE.Clock = new THREE.Clock(false); // autoStart: false para no iniciar hasta cerrar how to play
 
   // Estado del movimiento
   private keys: { [key: string]: boolean } = {};
@@ -156,6 +156,8 @@ export class MainScene {
   private isTurningRight: boolean = false;
   private currentTurnSpeed: number = 0; // Para suavizar el giro en móvil
   private keyboardTurnSpeed: number = 0; // Para suavizar el giro de teclado
+  private currentRoll: number = 0; // Para suavizar el balanceo visual
+  private smoothedTurnSpeed: number = 0; // Para suavizar la velocidad de giro total
 
   // Estado del juego (persistido con SDK)
   private hasSeenInstructions: boolean = false;
@@ -166,6 +168,7 @@ export class MainScene {
   // Optimización: Objetos reutilizables para evitar garbage collection
   private tempVector: THREE.Vector3 = new THREE.Vector3();
   private tempVector2: THREE.Vector3 = new THREE.Vector3();
+  private forwardDirection: THREE.Vector3 = new THREE.Vector3(); // Para movimiento
   private dummyObject: THREE.Object3D = new THREE.Object3D();
 
   // Optimización: Cache del tiempo transcurrido
@@ -189,14 +192,15 @@ export class MainScene {
     const height = window.innerHeight;
     const aspectRatio = width / height;
 
-    // Aumentamos el plano lejano (far) a 4000 para evitar clipping con el cielo
-    this.camera = new THREE.PerspectiveCamera(75, aspectRatio, 0.1, 4000);
-
-    // Crear renderer - Optimizado para móviles
+    // Crear renderer primero para detectar móvil
     this.isMobile =
       /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
         navigator.userAgent
       );
+
+    // Plano lejano reducido en móviles para mejor rendimiento
+    const farPlane = this.isMobile ? 2000 : 4000;
+    this.camera = new THREE.PerspectiveCamera(75, aspectRatio, 0.1, farPlane);
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: !this.isMobile, // Desactivar antialiasing en móviles
@@ -270,8 +274,16 @@ export class MainScene {
   private async initFarcadeSDK(): Promise<void> {
     if (window.FarcadeSDK) {
       try {
+        // Timeout para evitar que el juego se quede colgado en local
+        const timeoutPromise = new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error("SDK timeout")), 2000)
+        );
+
         // Usar singlePlayer.actions.ready() para obtener gameInfo con initialGameState
-        const gameInfo = await window.FarcadeSDK.singlePlayer.actions.ready();
+        const gameInfo = await Promise.race([
+          window.FarcadeSDK.singlePlayer.actions.ready(),
+          timeoutPromise,
+        ]);
 
         // Cargar estado inicial si existe
         if (gameInfo?.initialGameState?.gameState) {
@@ -283,7 +295,7 @@ export class MainScene {
 
         // Manejar play again
         window.FarcadeSDK.onPlayAgain(() => {
-          location.reload();
+          this.resetGame();
         });
 
         // Manejar mute/unmute
@@ -307,13 +319,13 @@ export class MainScene {
         if (!this.hasSeenInstructions) {
           this.showHowToPlay();
         } else {
-          // Si ya vio las instrucciones, iniciar música directamente
-          this.audioManager.startMusic();
+          // Si ya vio las instrucciones, mostrar cuenta atrás directamente
+          this.showCountdown();
         }
       } catch (e) {
-        console.warn("Error initializing Farcade SDK:", e);
+        console.warn("SDK not available or timeout - running in dev mode:", e);
         this.checkSupportStatus();
-        // En caso de error, mostrar instrucciones por defecto
+        // En caso de error o timeout, mostrar instrucciones por defecto
         this.showHowToPlay();
       }
     } else {
@@ -338,6 +350,95 @@ export class MainScene {
         console.warn("Error saving game state to SDK:", e);
       }
     }
+  }
+
+  /**
+   * Reinicia el juego sin recargar la página
+   */
+  private resetGame(): void {
+    // Pausar el juego mientras reiniciamos
+    this.isGamePaused = true;
+    this.isGameOver = false;
+
+    // Reiniciar puntuación
+    this.score = 0;
+    if (this.scoreElement) {
+      this.scoreElement.innerText = "0";
+    }
+
+    // Reiniciar hambre
+    this.currentHunger = this.maxHunger;
+    // Actualizar UI de hambre directamente
+    if (this.hungerBarElement) {
+      this.hungerBarElement.style.background = `conic-gradient(#00ff00 100%, transparent 0)`;
+    }
+
+    // Reiniciar posición de la paloma
+    this.pigeon.position.set(0, 20, 0);
+    this.pigeon.rotation.set(0, 0, 0);
+    this.pigeonDirection = 0;
+    this.pigeonSpeed = this.baseSpeed;
+
+    // Reiniciar estados de power-ups
+    this.isSpeedBoostActive = false;
+    this.speedBoostTimer = 0;
+    this.isInWhirlpool = false;
+
+    // Reiniciar estados de giro
+    this.keyboardTurnSpeed = 0;
+    this.currentTurnSpeed = 0;
+    this.currentRoll = 0;
+    this.smoothedTurnSpeed = 0;
+
+    // Reiniciar dificultad
+    this.flamingoSpeedMultiplier = 1.0;
+    this.hardModeActivated = false;
+
+    // Limpiar efectos visuales
+    for (const effect of this.ringEffects) {
+      this.scene.remove(effect);
+      if (effect.geometry) effect.geometry.dispose();
+      if (effect.material) (effect.material as THREE.Material).dispose();
+    }
+    this.ringEffects = [];
+
+    for (const particle of this.particles) {
+      this.scene.remove(particle);
+      if (particle.geometry) particle.geometry.dispose();
+      if (particle.material) (particle.material as THREE.Material).dispose();
+    }
+    this.particles = [];
+
+    for (const trail of this.trailParticles) {
+      this.scene.remove(trail);
+      if (trail.geometry) trail.geometry.dispose();
+      if (trail.material) (trail.material as THREE.Material).dispose();
+    }
+    this.trailParticles = [];
+
+    // Reposicionar flamingos
+    for (const flamingo of this.flamingos) {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = 150 + Math.random() * 100;
+      flamingo.mesh.position.set(
+        Math.cos(angle) * distance,
+        15 + Math.random() * 10,
+        Math.sin(angle) * distance
+      );
+      flamingo.targetIndex = null;
+    }
+
+    // Reiniciar clock
+    this.clock.stop();
+
+    // Actualizar cámara a posición inicial
+    this.updateCamera(true);
+
+    // Reiniciar loop de animación si se había detenido
+    this.animate();
+
+    // Mostrar cuenta atrás
+    this.showCountdown();
   }
 
   /**
@@ -1325,9 +1426,10 @@ export class MainScene {
     // Color de fondo base (por si acaso)
     this.scene.background = new THREE.Color(0x87ceeb);
 
-    // Niebla más suave y lejana para que no se vea "borroso" cerca
-    // Ajustamos la niebla para que coincida mejor con la nueva distancia de visión
-    this.scene.fog = new THREE.Fog(0x87ceeb, 500, 3000);
+    // Niebla - más cercana en móviles para mejor rendimiento
+    const fogNear = this.isMobile ? 300 : 500;
+    const fogFar = this.isMobile ? 1500 : 3000;
+    this.scene.fog = new THREE.Fog(0x87ceeb, fogNear, fogFar);
 
     // Crear un domo gigante para el cielo con gradiente
     // Usamos coordenadas locales (position) en lugar de mundiales para que el gradiente
@@ -1360,8 +1462,14 @@ export class MainScene {
       exponent: { value: 0.6 },
     };
 
-    // Aumentamos el radio del cielo para asegurar que siempre esté "lejos"
-    const skyGeo = new THREE.SphereGeometry(3000, 32, 15);
+    // Radio y detalle del cielo - reducido en móviles
+    const skyRadius = this.isMobile ? 1800 : 3000;
+    const skySegments = this.isMobile ? 16 : 32;
+    const skyGeo = new THREE.SphereGeometry(
+      skyRadius,
+      skySegments,
+      Math.floor(skySegments / 2)
+    );
     const skyMat = new THREE.ShaderMaterial({
       uniforms: uniforms,
       vertexShader: vertexShader,
@@ -1788,22 +1896,25 @@ export class MainScene {
 
     // Teclado - Giro progresivo (aceleración suave)
     const maxKeyboardTurnSpeed = this.pigeonRotationSpeed * delta;
-    const keyboardAcceleration = delta * 4; // Velocidad de aceleración
-    const keyboardDeceleration = delta * 6; // Velocidad de deceleración (más rápida)
+    const keyboardAcceleration = delta * 6; // Velocidad de aceleración (aumentada para respuesta rápida)
+    const keyboardDeceleration = delta * 8; // Velocidad de deceleración (más rápida)
 
-    if (this.keys["KeyA"] || this.keys["ArrowLeft"]) {
-      // Acelerar progresivamente hacia la izquierda
+    const leftPressed = this.keys["KeyA"] || this.keys["ArrowLeft"];
+    const rightPressed = this.keys["KeyD"] || this.keys["ArrowRight"];
+
+    if (leftPressed && !rightPressed) {
+      // Acelerar progresivamente hacia la izquierda (positivo)
       this.keyboardTurnSpeed = Math.min(
         this.keyboardTurnSpeed + keyboardAcceleration,
         maxKeyboardTurnSpeed
       );
-    } else if (this.keys["KeyD"] || this.keys["ArrowRight"]) {
-      // Acelerar progresivamente hacia la derecha
+    } else if (rightPressed && !leftPressed) {
+      // Acelerar progresivamente hacia la derecha (negativo)
       this.keyboardTurnSpeed = Math.max(
         this.keyboardTurnSpeed - keyboardAcceleration,
         -maxKeyboardTurnSpeed
       );
-    } else {
+    } else if (!leftPressed && !rightPressed) {
       // Decelerar suavemente hacia 0 cuando no hay input
       if (this.keyboardTurnSpeed > 0) {
         this.keyboardTurnSpeed = Math.max(
@@ -1817,6 +1928,7 @@ export class MainScene {
         );
       }
     }
+    // Si ambas teclas están presionadas, mantener velocidad actual (no hacer nada)
     turnSpeed += this.keyboardTurnSpeed;
 
     // Móvil (Hold Left/Right) - Giro progresivo
@@ -1832,19 +1944,38 @@ export class MainScene {
     }
 
     // Suavizar el giro en móvil (aceleración/deceleración progresiva)
-    const lerpFactor = 8;
+    const lerpFactor = 10; // Aumentado para respuesta más rápida
     this.currentTurnSpeed = THREE.MathUtils.lerp(
       this.currentTurnSpeed,
       targetTurnSpeed,
-      delta * lerpFactor // Velocidad de transición
+      1 - Math.exp(-lerpFactor * delta) // Interpolación exponencial independiente de FPS
     );
     turnSpeed += this.currentTurnSpeed;
 
-    this.pigeonDirection += turnSpeed;
+    // Suavizar la velocidad de giro total para evitar movimientos bruscos
+    const turnSmoothFactor = 15;
+    this.smoothedTurnSpeed = THREE.MathUtils.lerp(
+      this.smoothedTurnSpeed,
+      turnSpeed,
+      1 - Math.exp(-turnSmoothFactor * delta)
+    );
+
+    this.pigeonDirection += this.smoothedTurnSpeed;
     this.pigeon.rotation.y = this.pigeonDirection;
 
-    // Efecto visual de Roll (Balanceo) al girar - Simplificado
-    this.pigeon.rotation.z = THREE.MathUtils.clamp(turnSpeed * 5.0, -0.3, 0.3);
+    // Efecto visual de Roll (Balanceo) al girar - Suavizado
+    const targetRoll = THREE.MathUtils.clamp(
+      this.smoothedTurnSpeed * 5.0,
+      -0.3,
+      0.3
+    );
+    const rollSmoothFactor = 8;
+    this.currentRoll = THREE.MathUtils.lerp(
+      this.currentRoll,
+      targetRoll,
+      1 - Math.exp(-rollSmoothFactor * delta)
+    );
+    this.pigeon.rotation.z = this.currentRoll;
 
     // Pitch siempre a 0 (horizontal)
     this.pigeon.rotation.x = 0;
@@ -1860,18 +1991,21 @@ export class MainScene {
       targetSpeed = this.whirlpoolSlowSpeed;
     }
 
+    // Interpolación exponencial para suavizado independiente de FPS
+    // Factor más bajo en móviles para transiciones más suaves
+    const speedSmoothFactor = this.isMobile ? 2.5 : 3.5;
     this.pigeonSpeed = THREE.MathUtils.lerp(
       this.pigeonSpeed,
       targetSpeed,
-      delta * 2.0
+      1 - Math.exp(-speedSmoothFactor * delta)
     );
 
     const moveSpeed = this.pigeonSpeed * delta;
 
-    // Siempre avanzar hacia adelante
-    const forward = new THREE.Vector3(0, 0, 1);
-    forward.applyEuler(this.pigeon.rotation);
-    this.pigeon.position.add(forward.multiplyScalar(moveSpeed));
+    // Siempre avanzar hacia adelante - Reutilizar vector para evitar GC
+    this.forwardDirection.set(0, 0, 1);
+    this.forwardDirection.applyEuler(this.pigeon.rotation);
+    this.pigeon.position.addScaledVector(this.forwardDirection, moveSpeed);
 
     // Efecto de atracción de remolinos
     this.isInWhirlpool = false;
@@ -2361,7 +2495,9 @@ export class MainScene {
     }
 
     // Calcular delta time (tiempo transcurrido desde el último frame en segundos)
-    const delta = this.clock.getDelta();
+    // Clampear delta para evitar saltos grandes en frames lentos (común en móviles)
+    const rawDelta = this.clock.getDelta();
+    const delta = Math.min(Math.max(rawDelta, 0.001), 0.1); // Máx ~10 FPS para evitar tirones extremos
 
     // Cache del tiempo transcurrido (evita múltiples llamadas)
     this.cachedElapsedTime = this.clock.getElapsedTime();
@@ -2637,14 +2773,107 @@ export class MainScene {
       this.saveGameState();
 
       overlay.remove();
-      this.isGamePaused = false;
-      this.audioManager.startMusic();
+      // Mostrar cuenta atrás antes de iniciar
+      this.showCountdown();
     };
 
     overlay.appendChild(title);
     overlay.appendChild(instructionsList);
     overlay.appendChild(goBtn);
     document.body.appendChild(overlay);
+  }
+
+  /**
+   * Muestra una cuenta atrás (3, 2, 1, GO!) antes de iniciar el juego
+   */
+  private showCountdown(): void {
+    const countdownOverlay = document.createElement("div");
+    countdownOverlay.id = "countdown-overlay";
+    countdownOverlay.style.cssText = `
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      pointer-events: none;
+      font-family: 'Fredoka', 'Comic Sans MS', cursive;
+    `;
+
+    const countdownText = document.createElement("div");
+    countdownText.style.cssText = `
+      font-size: 180px;
+      font-weight: bold;
+      color: #ff4444;
+      text-shadow: 
+        -3px -3px 0 #000,
+        3px -3px 0 #000,
+        -3px 3px 0 #000,
+        3px 3px 0 #000,
+        -5px -5px 0 #222,
+        5px 5px 0 #222;
+      -webkit-text-stroke: 4px #000;
+      animation: countdownPulse 0.5s ease-out;
+    `;
+
+    // Añadir animación CSS
+    const style = document.createElement("style");
+    style.textContent = `
+      @keyframes countdownPulse {
+        0% { transform: scale(1.5); opacity: 0; }
+        50% { transform: scale(1.1); opacity: 1; }
+        100% { transform: scale(1); opacity: 1; }
+      }
+      @keyframes countdownFadeOut {
+        0% { transform: scale(1); opacity: 1; }
+        100% { transform: scale(0.5); opacity: 0; }
+      }
+    `;
+    document.head.appendChild(style);
+
+    countdownOverlay.appendChild(countdownText);
+    document.body.appendChild(countdownOverlay);
+
+    const countdownValues = ["3", "2", "1", "GO!"];
+    let currentIndex = 0;
+
+    const showNext = () => {
+      if (currentIndex < countdownValues.length) {
+        countdownText.textContent = countdownValues[currentIndex];
+        countdownText.style.animation = "none";
+        // Forzar reflow para reiniciar animación
+        countdownText.offsetHeight;
+        countdownText.style.animation = "countdownPulse 0.5s ease-out";
+
+        // Ajustar tamaño para "GO!"
+        if (countdownValues[currentIndex] === "GO!") {
+          countdownText.style.fontSize = "120px";
+        }
+
+        currentIndex++;
+
+        if (currentIndex < countdownValues.length) {
+          setTimeout(showNext, 700);
+        } else {
+          // Después de "GO!", esperar un momento y luego iniciar
+          setTimeout(() => {
+            countdownText.style.animation =
+              "countdownFadeOut 0.3s ease-out forwards";
+            setTimeout(() => {
+              countdownOverlay.remove();
+              style.remove();
+              // Ahora sí iniciar el juego
+              this.isGamePaused = false;
+              this.clock.start();
+              this.audioManager.startMusic();
+            }, 300);
+          }, 400);
+        }
+      }
+    };
+
+    // Iniciar cuenta atrás
+    showNext();
   }
 
   /**
