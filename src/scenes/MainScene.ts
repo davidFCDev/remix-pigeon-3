@@ -287,33 +287,23 @@ export class MainScene {
 
         // Cargar estado inicial si existe
         if (gameInfo?.initialGameState?.gameState) {
-          const state = gameInfo.initialGameState.gameState;
+          const state = gameInfo.initialGameState.gameState as any;
           if (state.hasSeenInstructions !== undefined) {
             this.hasSeenInstructions = state.hasSeenInstructions;
           }
         }
 
         // Manejar play again
-        window.FarcadeSDK.onPlayAgain(() => {
+        (window.FarcadeSDK as any).onPlayAgain(() => {
           this.resetGame();
         });
 
         // Manejar mute/unmute
-        window.FarcadeSDK.onToggleMute((data: { isMuted: boolean }) => {
+        (window.FarcadeSDK as any).onToggleMute((data: { isMuted: boolean }) => {
           this.audioManager.setMuted(data.isMuted);
         });
 
-        // Manejar compras completadas
-        window.FarcadeSDK.onPurchaseComplete((data: { success: boolean }) => {
-          if (data.success) {
-            // Ocultar el botón de soporte si la compra fue exitosa
-            const btn = document.getElementById("support-heart-btn");
-            if (btn) btn.remove();
-          }
-        });
 
-        // Comprobar compras
-        this.checkSupportStatus();
 
         // Mostrar How to Play solo si el usuario no ha visto las instrucciones
         if (!this.hasSeenInstructions) {
@@ -324,13 +314,11 @@ export class MainScene {
         }
       } catch (e) {
         console.warn("SDK not available or timeout - running in dev mode:", e);
-        this.checkSupportStatus();
         // En caso de error o timeout, mostrar instrucciones por defecto
         this.showHowToPlay();
       }
     } else {
       // Dev mode fallback
-      this.checkSupportStatus();
       this.showHowToPlay();
     }
   }
@@ -2524,169 +2512,6 @@ export class MainScene {
     this.renderer.render(this.scene, this.camera);
   };
 
-  /**
-   * Comprueba si el usuario ya ha apoyado al desarrollador
-   */
-  private checkSupportStatus(): void {
-    // Si no hay SDK, mostramos el botón por defecto
-    if (!window.FarcadeSDK) {
-      this.createSupportUI();
-      return;
-    }
-
-    // Comprobar si el usuario ya tiene el item usando la API correcta del SDK
-    try {
-      const sdk = window.FarcadeSDK as any;
-      if (sdk.hasItem && typeof sdk.hasItem === "function") {
-        const hasTip = sdk.hasItem("just-a-tip");
-        if (!hasTip) this.createSupportUI();
-      } else {
-        // Fallback: mostrar siempre si no podemos comprobar
-        this.createSupportUI();
-      }
-    } catch (e) {
-      console.warn("Error checking purchased items:", e);
-      this.createSupportUI();
-    }
-  }
-
-  /**
-   * Crea el botón de corazón
-   */
-  private createSupportUI(): void {
-    const heartBtn = document.createElement("button");
-    heartBtn.id = "support-heart-btn";
-    heartBtn.textContent = "♥";
-    heartBtn.style.cssText = `
-        position: absolute;
-        top: 20px;
-        right: 20px;
-        width: 50px;
-        height: 50px;
-        border-radius: 50%;
-        background-color: rgba(255, 68, 68, 0.8);
-        color: white;
-        font-size: 24px;
-        border: 2px solid white;
-        cursor: pointer;
-        z-index: 1000;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: transform 0.2s;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    `;
-
-    heartBtn.onmouseenter = () => (heartBtn.style.transform = "scale(1.1)");
-    heartBtn.onmouseleave = () => (heartBtn.style.transform = "scale(1.0)");
-    heartBtn.onclick = () => this.openSupportOverlay();
-
-    document.body.appendChild(heartBtn);
-  }
-
-  private openSupportOverlay(): void {
-    this.isGamePaused = true;
-
-    const overlay = document.createElement("div");
-    overlay.id = "support-overlay";
-    overlay.style.cssText = `
-        position: fixed;
-        top: 0; left: 0; width: 100%; height: 100%;
-        background-color: rgba(0, 0, 0, 0.85);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        z-index: 2000;
-        backdrop-filter: blur(5px);
-        font-family: 'Fredoka', 'Comic Sans MS', cursive;
-    `;
-
-    // Titulo
-    const title = document.createElement("h2");
-    title.textContent = "Just a tip";
-    title.style.cssText =
-      "color: #ff4444; font-size: 42px; margin-bottom: 10px; text-align: center;";
-
-    // Subtitulo
-    const subtitle = document.createElement("p");
-    subtitle.textContent = "Support me if you enjoy my games";
-    subtitle.style.cssText =
-      "color: #ccc; font-size: 20px; margin-bottom: 40px; text-align: center; max-width: 80%;";
-
-    // Boton 100 credits
-    const buyBtn = document.createElement("button");
-    buyBtn.textContent = "100 credits";
-    buyBtn.style.cssText = `
-        padding: 15px 40px;
-        font-size: 24px;
-        background-color: #ff4444;
-        color: white;
-        border: none;
-        border-radius: 50px;
-        cursor: pointer;
-        font-weight: bold;
-        box-shadow: 0 0 20px rgba(255, 68, 68, 0.4);
-        margin-bottom: 20px;
-        transition: transform 0.2s;
-    `;
-    buyBtn.onmouseenter = () => (buyBtn.style.transform = "scale(1.05)");
-    buyBtn.onmouseleave = () => (buyBtn.style.transform = "scale(1.0)");
-    buyBtn.onclick = async () => {
-      const sdk = window.FarcadeSDK as any;
-      if (sdk && sdk.purchase && typeof sdk.purchase === "function") {
-        try {
-          const result = await sdk.purchase({ item: "just-a-tip" });
-          if (result && result.success) {
-            // Si éxito, cerrar y ocultar botón
-            this.closeSupportOverlay();
-            const btn = document.getElementById("support-heart-btn");
-            if (btn) btn.remove();
-          }
-        } catch (err: any) {
-          console.error("Purchase error:", err);
-        }
-      } else {
-        console.log("Purchase logic (SDK not ready)");
-      }
-    };
-
-    // Back button
-    const backBtn = document.createElement("button");
-    backBtn.textContent = "Back";
-    backBtn.style.cssText = `
-        background: transparent;
-        border: 2px solid #555;
-        color: #aaa;
-        padding: 10px 30px;
-        border-radius: 30px;
-        cursor: pointer;
-        font-size: 16px;
-        transition: all 0.2s;
-    `;
-    backBtn.onmouseenter = () => {
-      backBtn.style.borderColor = "#fff";
-      backBtn.style.color = "#fff";
-    };
-    backBtn.onmouseleave = () => {
-      backBtn.style.borderColor = "#555";
-      backBtn.style.color = "#aaa";
-    };
-    backBtn.onclick = () => this.closeSupportOverlay();
-
-    overlay.appendChild(title);
-    overlay.appendChild(subtitle);
-    overlay.appendChild(buyBtn);
-    overlay.appendChild(backBtn);
-
-    document.body.appendChild(overlay);
-  }
-
-  private closeSupportOverlay(): void {
-    const overlay = document.getElementById("support-overlay");
-    if (overlay) overlay.remove();
-    this.isGamePaused = false;
-  }
 
   /**
    * Muestra las instrucciones del juego la primera vez
@@ -2893,10 +2718,6 @@ export class MainScene {
     window.removeEventListener("resize", this.handleResize);
 
     // Limpiar UI
-    const heartBtn = document.getElementById("support-heart-btn");
-    if (heartBtn) heartBtn.remove();
-    const overlay = document.getElementById("support-overlay");
-    if (overlay) overlay.remove();
 
     // Limpiar geometrías y materiales
     this.scene.traverse((object) => {

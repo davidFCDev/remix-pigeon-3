@@ -38,9 +38,11 @@ export class AudioManager {
    * Reproduce el sonido de recolección
    */
   public playCollectSound(): void {
+    if (this.isMuted) return;
     // Clonamos el nodo para permitir sonidos superpuestos si se recogen rápido
     const sound = this.collectSound.cloneNode() as HTMLAudioElement;
     sound.volume = 0.4;
+    sound.muted = this.isMuted;
     sound.play().catch((e) => console.warn("No se pudo reproducir SFX:", e));
   }
 
@@ -48,6 +50,7 @@ export class AudioManager {
    * Reproduce el sonido de recolección de Power-up
    */
   public playPowerUpSound(): void {
+    if (this.isMuted) return;
     if (this.powerUpSound) {
       this.powerUpSound.currentTime = 0;
       this.powerUpSound.play().catch((e) => console.warn("Audio error:", e));
